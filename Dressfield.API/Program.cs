@@ -226,12 +226,15 @@ var app = builder.Build();
 app.UseForwardedHeaders();
 app.UseExceptionHandler();
 
-if (app.Environment.IsDevelopment())
+// Enable Swagger in all environments (for testing/development — disable in production later)
+app.UseSwagger();
+app.UseSwaggerUI(c =>
 {
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
-else
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Dressfield API v1");
+    c.RoutePrefix = string.Empty; // Available at /
+});
+
+if (!app.Environment.IsDevelopment())
 {
     // Azure App Service terminates TLS at the edge, but enforce at app layer too
     app.UseHttpsRedirection();
