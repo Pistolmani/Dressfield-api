@@ -1,0 +1,15 @@
+bin/
+obj/
+logs/
+*.user
+*.suo
+.vs/
+*.out.log
+*.err.log
+wwwroot/
+
+# Local secret overrides — never commit these
+# Production secrets live in Azure App Service → Configuration → Application settings
+appsettings.*.local.json
+appsettings.Production.json
+secrets.json
