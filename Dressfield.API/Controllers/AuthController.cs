@@ -59,7 +59,7 @@ public class AuthController : ControllerBase
         if (userId != null)
             await _authService.LogoutAsync(userId);
 
-        Response.Cookies.Delete("refreshToken");
+        DeleteRefreshTokenCookie();
         return Ok();
     }
 
@@ -103,6 +103,17 @@ public class AuthController : ControllerBase
             SameSite  = SameSiteMode.None,
             Expires   = DateTimeOffset.UtcNow.AddDays(7),
             Path      = "/api/auth"
+        });
+    }
+
+    private void DeleteRefreshTokenCookie()
+    {
+        Response.Cookies.Delete("refreshToken", new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = true,
+            SameSite = SameSiteMode.None,
+            Path = "/api/auth"
         });
     }
 }

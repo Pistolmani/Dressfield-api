@@ -150,13 +150,25 @@ builder.Services.AddRateLimiter(options =>
 });
 
 // â”€â”€ Application Services â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-builder.Services.AddScoped<IEmailService, DevEmailService>();
+var smtpHost = builder.Configuration["Smtp:Host"];
+if (string.IsNullOrWhiteSpace(smtpHost))
+{
+    builder.Services.AddScoped<IEmailService, DevEmailService>();
+    Log.Warning("Smtp:Host is not configured. Using DevEmailService (emails are logged only).");
+}
+else
+{
+    builder.Services.AddScoped<IEmailService, SmtpEmailService>();
+    Log.Information("Using SmtpEmailService for outbound emails.");
+}
+
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IProductService, ProductService>();
 builder.Services.AddScoped<ICustomOrderService, CustomOrderService>();
 builder.Services.AddScoped<IOrderService, OrderService>();
 builder.Services.AddScoped<ICartService, CartService>();
 builder.Services.AddScoped<IAdminDashboardService, AdminDashboardService>();
+builder.Services.AddHostedService<EmailOutboxWorker>();
 
 // Storage service â€” Azure Blob in production, local filesystem only in development
 var azureConnectionString = builder.Configuration["AzureStorage:ConnectionString"];
