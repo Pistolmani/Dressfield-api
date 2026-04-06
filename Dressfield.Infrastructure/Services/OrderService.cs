@@ -159,7 +159,8 @@ public class OrderService : IOrderService
                 ? product.Variants.FirstOrDefault(v => v.Id == cartItem.VariantId.Value && v.IsActive)
                 : null;
 
-            var unitPrice = product.BasePrice + (variant?.PriceAdjustment ?? 0);
+            var discountedBasePrice = CalculateDiscountedProductPrice(product.BasePrice, product.SalePercentage);
+            var unitPrice = discountedBasePrice + (variant?.PriceAdjustment ?? 0);
             var lineTotal = unitPrice * cartItem.Quantity;
             subtotal += lineTotal;
 
@@ -176,6 +177,27 @@ public class OrderService : IOrderService
             });
         }
 
+        var normalizedPromoCode = NormalizePromoCode(request.PromoCode);
+        decimal promoDiscountAmount = 0m;
+        decimal? promoDiscountPercentage = null;
+
+        if (!string.IsNullOrWhiteSpace(normalizedPromoCode))
+        {
+            var promoCode = await _db.PromoCodes
+                .AsNoTracking()
+                .FirstOrDefaultAsync(x => x.Code == normalizedPromoCode);
+
+            if (promoCode is null || !promoCode.IsActive)
+                throw new InvalidOperationException("პრომო კოდი არასწორია ან გამორთულია.");
+
+            if (promoCode.ExpiresAtUtc.HasValue && promoCode.ExpiresAtUtc.Value <= DateTime.UtcNow)
+                throw new InvalidOperationException("პრომო კოდის ვადა გასულია.");
+
+            promoDiscountPercentage = NormalizePercent(promoCode.DiscountPercentage);
+            promoDiscountAmount = RoundMoney(subtotal * promoDiscountPercentage.Value / 100m);
+        }
+
+        var discountedSubtotal = Math.Max(0m, subtotal - promoDiscountAmount);
         var orderKey = Guid.NewGuid().ToString("N");
 
         var order = new Order
@@ -190,8 +212,11 @@ public class OrderService : IOrderService
             ShippingPostalCode = request.ShippingPostalCode?.Trim(),
             CustomerNotes = request.CustomerNotes?.Trim(),
             Subtotal = subtotal,
+            PromoDiscountAmount = promoDiscountAmount,
+            PromoDiscountPercentage = promoDiscountPercentage,
+            PromoCode = normalizedPromoCode,
             ShippingCost = _shippingCost,
-            TotalAmount = subtotal + _shippingCost,
+            TotalAmount = discountedSubtotal + _shippingCost,
             BogOrderKey = orderKey,
             Status = OrderStatus.Pending,
             Items = items
@@ -297,6 +322,9 @@ public class OrderService : IOrderService
             order.ShippingPostalCode,
             order.Status,
             order.Subtotal,
+            order.PromoDiscountAmount,
+            order.PromoDiscountPercentage,
+            order.PromoCode,
             order.ShippingCost,
             order.TotalAmount,
             order.CustomerNotes,
@@ -371,5 +399,22 @@ public class OrderService : IOrderService
             Subject = $"შეკვეთა #{orderId} გაიგზავნა — DressField",
             HtmlBody = html,
         });
+    }
+    private static decimal NormalizePercent(decimal value) =>
+        Math.Clamp(value, 0m, 100m);
+
+    private static string? NormalizePromoCode(string? promoCode)
+    {
+        var normalized = promoCode?.Trim().ToUpperInvariant();
+        return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
+
+    private static decimal RoundMoney(decimal value) =>
+        decimal.Round(value, 2, MidpointRounding.AwayFromZero);
+
+    private static decimal CalculateDiscountedProductPrice(decimal basePrice, decimal salePercentage)
+    {
+        var percent = NormalizePercent(salePercentage);
+        return RoundMoney(basePrice * (1m - percent / 100m));
     }
 }

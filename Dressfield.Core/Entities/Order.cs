@@ -24,6 +24,9 @@ public class Order
 
     // Pricing snapshot
     public decimal Subtotal { get; set; }
+    public decimal PromoDiscountAmount { get; set; }
+    public decimal? PromoDiscountPercentage { get; set; }
+    public string? PromoCode { get; set; }
     public decimal ShippingCost { get; set; }
     public decimal TotalAmount { get; set; }
 

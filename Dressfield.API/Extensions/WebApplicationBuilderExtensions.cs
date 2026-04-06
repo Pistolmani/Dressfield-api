@@ -177,6 +177,7 @@ public static class WebApplicationBuilderExtensions
         builder.Services.AddScoped<IProductService, ProductService>();
         builder.Services.AddScoped<ICustomOrderService, CustomOrderService>();
         builder.Services.AddScoped<IOrderService, OrderService>();
+        builder.Services.AddScoped<IPromoCodeService, PromoCodeService>();
 
         var azureConnectionString = builder.Configuration["AzureStorage:ConnectionString"];
         if (string.IsNullOrWhiteSpace(azureConnectionString))

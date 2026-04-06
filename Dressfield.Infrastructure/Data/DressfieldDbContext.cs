@@ -18,6 +18,7 @@ public class DressfieldDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<OrderStatusLog> OrderStatusLogs => Set<OrderStatusLog>();
     public DbSet<PendingEmail> PendingEmails => Set<PendingEmail>();
+    public DbSet<PromoCode> PromoCodes => Set<PromoCode>();
     public DbSet<Cart> Carts => Set<Cart>();
     public DbSet<CartItem> CartItems => Set<CartItem>();
 
@@ -39,6 +40,7 @@ public class DressfieldDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.Description).HasMaxLength(5000).IsRequired();
             entity.Property(e => e.Sku).HasMaxLength(64);
             entity.Property(e => e.BasePrice).HasPrecision(18, 2);
+            entity.Property(e => e.SalePercentage).HasPrecision(5, 2);
             entity.HasIndex(e => e.Slug).IsUnique();
         });
 
@@ -97,6 +99,9 @@ public class DressfieldDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.ShippingAddressLine2).HasMaxLength(200);
             entity.Property(e => e.ShippingPostalCode).HasMaxLength(20);
             entity.Property(e => e.Subtotal).HasPrecision(18, 2);
+            entity.Property(e => e.PromoDiscountAmount).HasPrecision(18, 2);
+            entity.Property(e => e.PromoDiscountPercentage).HasPrecision(5, 2);
+            entity.Property(e => e.PromoCode).HasMaxLength(64);
             entity.Property(e => e.ShippingCost).HasPrecision(18, 2);
             entity.Property(e => e.TotalAmount).HasPrecision(18, 2);
             entity.Property(e => e.BogOrderId).HasMaxLength(100);
@@ -135,6 +140,13 @@ public class DressfieldDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.Subject).HasMaxLength(300).IsRequired();
             entity.Property(e => e.LastError).HasMaxLength(1000);
             entity.HasIndex(e => new { e.Status, e.NextRetryAt });
+        });
+
+        builder.Entity<PromoCode>(entity =>
+        {
+            entity.Property(e => e.Code).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.DiscountPercentage).HasPrecision(5, 2);
+            entity.HasIndex(e => e.Code).IsUnique();
         });
 
         builder.Entity<Cart>(entity =>

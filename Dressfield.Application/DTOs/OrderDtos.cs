@@ -44,6 +44,9 @@ public record OrderDetailDto(
     string? ShippingPostalCode,
     OrderStatus Status,
     decimal Subtotal,
+    decimal PromoDiscountAmount,
+    decimal? PromoDiscountPercentage,
+    string? PromoCode,
     decimal ShippingCost,
     decimal TotalAmount,
     string? CustomerNotes,
@@ -68,6 +71,7 @@ public record CreateOrderRequest(
     string ShippingAddressLine1,
     string? ShippingAddressLine2,
     string? ShippingPostalCode,
+    string? PromoCode,
     string? CustomerNotes,
     IReadOnlyCollection<CartItemRequest> Items);
 

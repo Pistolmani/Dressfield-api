@@ -49,6 +49,7 @@ public class ProductService : IProductService
             ShortDescription = request.ShortDescription?.Trim(),
             Description = request.Description.Trim(),
             BasePrice = request.BasePrice,
+            SalePercentage = NormalizeSalePercentage(request.SalePercentage),
             Sku = request.Sku?.Trim(),
             IsActive = request.IsActive,
             IsFeatured = request.IsFeatured,
@@ -81,6 +82,7 @@ public class ProductService : IProductService
         product.ShortDescription = request.ShortDescription?.Trim();
         product.Description = request.Description.Trim();
         product.BasePrice = request.BasePrice;
+        product.SalePercentage = NormalizeSalePercentage(request.SalePercentage);
         product.Sku = request.Sku?.Trim();
         product.IsActive = request.IsActive;
         product.IsFeatured = request.IsFeatured;
@@ -164,6 +166,9 @@ public class ProductService : IProductService
                 x.Slug,
                 x.ShortDescription,
                 x.BasePrice,
+                x.SalePercentage,
+                x.BasePrice * (1m - ((x.SalePercentage < 0m ? 0m : (x.SalePercentage > 100m ? 100m : x.SalePercentage)) / 100m)),
+                x.SalePercentage > 0,
                 x.Images.OrderBy(i => i.SortOrder).Select(i => i.ImageUrl).FirstOrDefault(),
                 x.IsActive,
                 x.IsFeatured));
@@ -199,6 +204,9 @@ public class ProductService : IProductService
             product.ShortDescription,
             product.Description,
             product.BasePrice,
+            product.SalePercentage,
+            CalculateEffectivePrice(product.BasePrice, product.SalePercentage),
+            product.SalePercentage > 0,
             product.Sku,
             product.IsActive,
             product.IsFeatured,
@@ -241,4 +249,14 @@ public class ProductService : IProductService
             StockQuantity = x.StockQuantity,
             IsActive = x.IsActive
         }).ToList() ?? new List<ProductVariant>();
+
+    private static decimal NormalizeSalePercentage(decimal value) =>
+        Math.Clamp(value, 0m, 100m);
+
+    private static decimal CalculateEffectivePrice(decimal basePrice, decimal salePercentage)
+    {
+        var percent = NormalizeSalePercentage(salePercentage);
+        var factor = 1m - (percent / 100m);
+        return decimal.Round(basePrice * factor, 2, MidpointRounding.AwayFromZero);
+    }
 }

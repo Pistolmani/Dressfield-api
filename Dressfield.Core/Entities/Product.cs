@@ -8,6 +8,7 @@ public class Product
     public string? ShortDescription { get; set; }
     public string Description { get; set; } = string.Empty;
     public decimal BasePrice { get; set; }
+    public decimal SalePercentage { get; set; }
     public string? Sku { get; set; }
     public bool IsActive { get; set; } = true;
     public bool IsFeatured { get; set; }
