@@ -10,6 +10,7 @@ using Dressfield.Infrastructure.Data;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 
 namespace Dressfield.Infrastructure.Services;
@@ -20,17 +21,20 @@ public class AuthService : IAuthService
     private readonly DressfieldDbContext _db;
     private readonly IConfiguration _config;
     private readonly IEmailService _emailService;
+    private readonly ILogger<AuthService> _logger;
 
     public AuthService(
         UserManager<ApplicationUser> userManager,
         DressfieldDbContext db,
         IConfiguration config,
-        IEmailService emailService)
+        IEmailService emailService,
+        ILogger<AuthService> logger)
     {
         _userManager = userManager;
         _db = db;
         _config = config;
         _emailService = emailService;
+        _logger = logger;
     }
 
     public async Task<AuthResponse> RegisterAsync(RegisterRequest request)
@@ -49,6 +53,20 @@ public class AuthService : IAuthService
             throw new InvalidOperationException(string.Join("; ", result.Errors.Select(e => e.Description)));
 
         await _userManager.AddToRoleAsync(user, "Customer");
+
+        if (!string.IsNullOrWhiteSpace(user.Email))
+        {
+            try
+            {
+                QueueWelcomeEmail(user.Email!, user.FirstName);
+                await _db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to queue welcome email for user {UserId}", user.Id);
+            }
+        }
+
         return await GenerateAuthResponse(user);
     }
 
@@ -174,5 +192,28 @@ public class AuthService : IAuthService
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
         return Convert.ToBase64String(bytes);
+    }
+
+    private void QueueWelcomeEmail(string to, string firstName)
+    {
+        var safeFirstName = System.Net.WebUtility.HtmlEncode(
+            string.IsNullOrWhiteSpace(firstName) ? "there" : firstName.Trim());
+
+        var html = $"""
+            <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px;">
+                <h2>Welcome to DressField</h2>
+                <p>Hi {safeFirstName}, your account has been created successfully.</p>
+                <p>You can now browse products, create custom embroidery, and place orders.</p>
+                <hr style="border:none;border-top:1px solid #eee;margin:20px 0;" />
+                <p style="color:#888;font-size:13px;">— DressField</p>
+            </div>
+            """;
+
+        _db.PendingEmails.Add(new PendingEmail
+        {
+            ToEmail = to,
+            Subject = "Welcome to DressField",
+            HtmlBody = html,
+        });
     }
 }
