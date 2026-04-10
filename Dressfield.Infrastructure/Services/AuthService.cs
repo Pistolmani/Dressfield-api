@@ -7,6 +7,7 @@ using Dressfield.Application.Interfaces;
 using Dressfield.Core.Entities;
 using Dressfield.Core.Interfaces;
 using Dressfield.Infrastructure.Data;
+using Google.Apis.Auth;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -134,6 +135,69 @@ public class AuthService : IAuthService
 
         var roles = await _userManager.GetRolesAsync(user);
         return new UserDto(user.Id, user.Email!, user.FirstName, user.LastName, roles.FirstOrDefault() ?? "Customer");
+    }
+
+    public async Task<AuthResponse> GoogleLoginAsync(string idToken, CancellationToken ct = default)
+    {
+        var googleClientId = _config["Google:ClientId"];
+        if (string.IsNullOrWhiteSpace(googleClientId))
+            throw new InvalidOperationException("Google:ClientId is not configured.");
+
+        GoogleJsonWebSignature.Payload payload;
+        try
+        {
+            payload = await GoogleJsonWebSignature.ValidateAsync(idToken,
+                new GoogleJsonWebSignature.ValidationSettings
+                {
+                    Audience = new[] { googleClientId }
+                });
+        }
+        catch (InvalidJwtException)
+        {
+            throw new UnauthorizedAccessException("Google token is invalid or expired.");
+        }
+
+        if (!payload.EmailVerified)
+            throw new UnauthorizedAccessException("Google account email is not verified.");
+
+        // Returning Google user — fast path
+        var user = await _userManager.FindByLoginAsync("Google", payload.Subject);
+
+        if (user == null)
+        {
+            // Existing account with same email — link Google to it
+            user = await _userManager.FindByEmailAsync(payload.Email);
+
+            if (user == null)
+            {
+                // New user — create account without a password
+                var nameParts = (payload.Name ?? "").Split(' ', 2);
+                user = new ApplicationUser
+                {
+                    UserName       = payload.Email,
+                    Email          = payload.Email,
+                    EmailConfirmed = true,
+                    FirstName      = nameParts.ElementAtOrDefault(0) ?? payload.Email,
+                    LastName       = nameParts.ElementAtOrDefault(1) ?? "",
+                    CreatedAt      = DateTime.UtcNow,
+                };
+                var createResult = await _userManager.CreateAsync(user);
+                if (!createResult.Succeeded)
+                    throw new InvalidOperationException(
+                        string.Join("; ", createResult.Errors.Select(e => e.Description)));
+
+                await _userManager.AddToRoleAsync(user, "Customer");
+            }
+
+            // Link Google provider to this user (new or existing-by-email)
+            var loginInfo = new UserLoginInfo("Google", payload.Subject, "Google");
+            var addResult = await _userManager.AddLoginAsync(user, loginInfo);
+            if (!addResult.Succeeded)
+                throw new InvalidOperationException(
+                    string.Join("; ", addResult.Errors.Select(e => e.Description)));
+        }
+
+        return await GenerateAuthResponse(user);
     }
 
     private async Task<AuthResponse> GenerateAuthResponse(ApplicationUser user)

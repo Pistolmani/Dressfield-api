@@ -11,4 +11,5 @@ public interface IAuthService
     Task ForgotPasswordAsync(string email, string resetBaseUrl);
     Task ResetPasswordAsync(ResetPasswordRequest request);
     Task<UserDto?> GetCurrentUserAsync(string userId);
+    Task<AuthResponse> GoogleLoginAsync(string idToken, CancellationToken ct = default);
 }

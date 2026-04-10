@@ -19,4 +19,6 @@ public record UserDto(string Id, string Email, string FirstName, string LastName
 
 public record ForgotPasswordRequest(string Email);
 
+public record GoogleLoginRequest(string IdToken);
+
 public record ResetPasswordRequest(string Email, string Token, string NewPassword);

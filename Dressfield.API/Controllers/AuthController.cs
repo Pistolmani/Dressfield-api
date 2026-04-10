@@ -83,6 +83,15 @@ public class AuthController : ControllerBase
         return Ok();
     }
 
+    [HttpPost("google")]
+    [EnableRateLimiting("auth")]
+    public async Task<IActionResult> GoogleLogin([FromBody] GoogleLoginRequest request, CancellationToken ct)
+    {
+        var response = await _authService.GoogleLoginAsync(request.IdToken, ct);
+        SetRefreshTokenCookie(response.RefreshToken!);
+        return Ok(new { response.AccessToken, response.User });
+    }
+
     [Authorize]
     [HttpGet("me")]
     public async Task<IActionResult> Me()
