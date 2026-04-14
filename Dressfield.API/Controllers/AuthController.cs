@@ -77,9 +77,17 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("reset-password")]
+    [EnableRateLimiting("auth")]
     public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest request)
     {
-        await _authService.ResetPasswordAsync(request);
+        try
+        {
+            await _authService.ResetPasswordAsync(request);
+        }
+        catch
+        {
+            // Never reveal whether the email/token combination is valid
+        }
         return Ok();
     }
 
@@ -101,6 +109,43 @@ public class AuthController : ControllerBase
 
         var user = await _authService.GetCurrentUserAsync(userId);
         return user != null ? Ok(user) : NotFound();
+    }
+
+    [Authorize]
+    [HttpPut("profile")]
+    public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileRequest request)
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (userId == null) return Unauthorized();
+
+        try
+        {
+            var updated = await _authService.UpdateProfileAsync(userId, request);
+            return Ok(updated);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [Authorize]
+    [HttpDelete("account")]
+    public async Task<IActionResult> DeleteAccount()
+    {
+        var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        if (userId == null) return Unauthorized();
+
+        try
+        {
+            await _authService.DeleteAccountAsync(userId);
+            DeleteRefreshTokenCookie();
+            return Ok();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
 
     private void SetRefreshTokenCookie(string refreshToken)

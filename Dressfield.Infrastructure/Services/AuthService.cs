@@ -134,7 +134,7 @@ public class AuthService : IAuthService
         if (user == null) return null;
 
         var roles = await _userManager.GetRolesAsync(user);
-        return new UserDto(user.Id, user.Email!, user.FirstName, user.LastName, roles.FirstOrDefault() ?? "Customer");
+        return ToDto(user, roles.FirstOrDefault() ?? "Customer");
     }
 
     public async Task<AuthResponse> GoogleLoginAsync(string idToken, CancellationToken ct = default)
@@ -200,6 +200,44 @@ public class AuthService : IAuthService
         return await GenerateAuthResponse(user);
     }
 
+    public async Task<UserDto> UpdateProfileAsync(string userId, UpdateProfileRequest request)
+    {
+        var user = await _userManager.FindByIdAsync(userId)
+                   ?? throw new InvalidOperationException("მომხმარებელი ვერ მოიძებნა");
+
+        user.FirstName    = request.FirstName.Trim();
+        user.LastName     = request.LastName.Trim();
+        user.PhoneNumber  = string.IsNullOrWhiteSpace(request.Phone) ? null : request.Phone.Trim();
+        user.AddressLine1 = string.IsNullOrWhiteSpace(request.AddressLine1) ? null : request.AddressLine1.Trim();
+        user.City         = string.IsNullOrWhiteSpace(request.City) ? null : request.City.Trim();
+
+        var result = await _userManager.UpdateAsync(user);
+        if (!result.Succeeded)
+            throw new InvalidOperationException(string.Join("; ", result.Errors.Select(e => e.Description)));
+
+        var roles = await _userManager.GetRolesAsync(user);
+        return ToDto(user, roles.FirstOrDefault() ?? "Customer");
+    }
+
+    public async Task DeleteAccountAsync(string userId)
+    {
+        var user = await _userManager.FindByIdAsync(userId)
+                   ?? throw new InvalidOperationException("მომხმარებელი ვერ მოიძებნა");
+
+        // Revoke all refresh tokens first
+        var tokens = await _db.RefreshTokens.Where(r => r.UserId == userId).ToListAsync();
+        _db.RefreshTokens.RemoveRange(tokens);
+        await _db.SaveChangesAsync();
+
+        var result = await _userManager.DeleteAsync(user);
+        if (!result.Succeeded)
+            throw new InvalidOperationException(string.Join("; ", result.Errors.Select(e => e.Description)));
+    }
+
+    private static UserDto ToDto(ApplicationUser user, string role) =>
+        new(user.Id, user.Email!, user.FirstName, user.LastName, role,
+            user.PhoneNumber, user.AddressLine1, user.City);
+
     private async Task<AuthResponse> GenerateAuthResponse(ApplicationUser user)
     {
         var roles = await _userManager.GetRolesAsync(user);
@@ -208,8 +246,7 @@ public class AuthService : IAuthService
         var accessToken = GenerateAccessToken(user, role);
         var refreshToken = await GenerateRefreshToken(user.Id);
 
-        var userDto = new UserDto(user.Id, user.Email!, user.FirstName, user.LastName, role);
-        return new AuthResponse(accessToken, userDto) { RefreshToken = refreshToken };
+        return new AuthResponse(accessToken, ToDto(user, role)) { RefreshToken = refreshToken };
     }
 
     private string GenerateAccessToken(ApplicationUser user, string role)

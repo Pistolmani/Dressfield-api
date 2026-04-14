@@ -15,7 +15,15 @@ public record AuthResponse(string AccessToken, UserDto User)
     public string? RefreshToken { get; init; }
 }
 
-public record UserDto(string Id, string Email, string FirstName, string LastName, string Role);
+public record UserDto(string Id, string Email, string FirstName, string LastName, string Role,
+    string? Phone = null, string? AddressLine1 = null, string? City = null);
+
+public record UpdateProfileRequest(
+    string FirstName,
+    string LastName,
+    string? Phone,
+    string? AddressLine1,
+    string? City);
 
 public record ForgotPasswordRequest(string Email);
 

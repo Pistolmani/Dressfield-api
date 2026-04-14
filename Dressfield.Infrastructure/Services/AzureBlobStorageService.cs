@@ -2,11 +2,20 @@ using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Dressfield.Core.Interfaces;
 using Microsoft.Extensions.Configuration;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.Formats.Webp;
+using SixLabors.ImageSharp.Processing;
 
 namespace Dressfield.Infrastructure.Services;
 
 public class AzureBlobStorageService : IStorageService
 {
+    private static readonly HashSet<string> ImageContentTypes =
+        new(StringComparer.OrdinalIgnoreCase) { "image/jpeg", "image/png", "image/webp", "image/gif" };
+
+    private const int MaxDimension = 1600; // px — longest edge
+    private const int WebpQuality  = 82;
+
     private readonly BlobContainerClient _container;
     private readonly string? _publicBaseUrl;
     private readonly Uri? _publicBaseUri;
@@ -29,16 +38,60 @@ public class AzureBlobStorageService : IStorageService
 
     public async Task<string> UploadAsync(Stream fileStream, string fileName, string contentType)
     {
-        var blobName = $"{Guid.NewGuid()}{Path.GetExtension(fileName)}";
-        var blobClient = _container.GetBlobClient(blobName);
+        string uploadContentType = contentType;
+        string extension         = Path.GetExtension(fileName).ToLowerInvariant();
 
-        await blobClient.UploadAsync(fileStream, new BlobHttpHeaders { ContentType = contentType });
+        Stream uploadStream;
+        bool   shouldDispose = false;
 
-        // Use CDN base URL if configured, otherwise use the native blob URL
-        if (!string.IsNullOrEmpty(_publicBaseUrl))
-            return $"{_publicBaseUrl}/{_container.Name}/{blobName}";
+        if (ImageContentTypes.Contains(contentType))
+        {
+            // Convert to WebP and resize to MaxDimension on the longest edge
+            var ms = new MemoryStream();
+            using (var image = await Image.LoadAsync(fileStream))
+            {
+                if (image.Width > MaxDimension || image.Height > MaxDimension)
+                    image.Mutate(x => x.Resize(new ResizeOptions
+                    {
+                        Size = new Size(MaxDimension, MaxDimension),
+                        Mode = ResizeMode.Max
+                    }));
 
-        return blobClient.Uri.ToString();
+                await image.SaveAsWebpAsync(ms, new WebpEncoder { Quality = WebpQuality });
+            }
+
+            ms.Position      = 0;
+            uploadStream     = ms;
+            uploadContentType = "image/webp";
+            extension        = ".webp";
+            shouldDispose    = true;
+        }
+        else
+        {
+            uploadStream = fileStream;
+        }
+
+        try
+        {
+            var blobName   = $"{Guid.NewGuid()}{extension}";
+            var blobClient = _container.GetBlobClient(blobName);
+
+            await blobClient.UploadAsync(uploadStream, new BlobHttpHeaders
+            {
+                ContentType  = uploadContentType,
+                CacheControl = "public, max-age=31536000, immutable"
+            });
+
+            if (!string.IsNullOrEmpty(_publicBaseUrl))
+                return $"{_publicBaseUrl}/{_container.Name}/{blobName}";
+
+            return blobClient.Uri.ToString();
+        }
+        finally
+        {
+            if (shouldDispose)
+                await uploadStream.DisposeAsync();
+        }
     }
 
     public async Task DeleteAsync(string fileUrl)

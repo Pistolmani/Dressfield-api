@@ -244,13 +244,15 @@ var app = builder.Build();
 app.UseForwardedHeaders();
 app.UseExceptionHandler();
 
-// Enable Swagger in all environments (for testing/development — disable in production later)
-app.UseSwagger();
-app.UseSwaggerUI(c =>
+if (!app.Environment.IsProduction())
 {
-    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Dressfield API v1");
-    c.RoutePrefix = string.Empty; // Available at /
-});
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Dressfield API v1");
+        c.RoutePrefix = string.Empty;
+    });
+}
 
 if (!app.Environment.IsDevelopment())
 {

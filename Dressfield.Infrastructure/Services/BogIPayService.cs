@@ -32,7 +32,7 @@ public class BogIPayService : IPaymentService
         _clientSecret  = config["BogIPay:ClientSecret"]  ?? throw new InvalidOperationException("BogIPay:ClientSecret is not configured.");
         _apiBaseUrl    = config["BogIPay:ApiBaseUrl"]    ?? throw new InvalidOperationException("BogIPay:ApiBaseUrl is not configured.");
         _frontendBaseUrl = config["BogIPay:FrontendBaseUrl"] ?? throw new InvalidOperationException("BogIPay:FrontendBaseUrl is not configured.");
-        _tokenUrl  = config["BogIPay:TokenUrl"]  ?? "https://oauth2.bog.ge/auth/realms/BOG/protocol/openid-connect/token";
+        _tokenUrl  = config["BogIPay:TokenUrl"]  ?? "https://oauth2.bog.ge/auth/realms/bog/protocol/openid-connect/token";
         _ordersUrl = config["BogIPay:OrdersUrl"] ?? "https://api.bog.ge/payments/v1/ecommerce/orders";
     }
 
@@ -47,20 +47,24 @@ public class BogIPayService : IPaymentService
 
             var body = new
             {
-                callback_url  = $"{_apiBaseUrl.TrimEnd('/')}/api/payments/callback?key={orderKey}",
-                shop_order_id = orderKey,
+                callback_url      = $"{_apiBaseUrl.TrimEnd('/')}/api/payments/callback?key={orderKey}",
+                external_order_id = orderKey,
                 redirect_urls = new
                 {
                     success = $"{_frontendBaseUrl.TrimEnd('/')}/order-confirmation?orderId={orderId}&key={orderKey}",
                     fail    = $"{_frontendBaseUrl.TrimEnd('/')}/order-failed?orderId={orderId}"
                 },
-                purchase_units = new[]
+                purchase_units = new
                 {
-                    new
+                    total_amount = amount,
+                    basket = new[]
                     {
-                        quantity   = "1",
-                        unit_price = amount,
-                        product_id = $"ORDER-{orderId}"
+                        new
+                        {
+                            quantity   = 1,
+                            unit_price = amount,
+                            product_id = $"ORDER-{orderId}"
+                        }
                     }
                 }
             };
@@ -81,12 +85,16 @@ public class BogIPayService : IPaymentService
             using var doc = JsonDocument.Parse(raw);
             var root = doc.RootElement;
 
+            _logger.LogInformation("BOG create-order response: {Body}", raw);
+
             var bogOrderId  = root.GetProperty("id").GetString();
             var redirectUrl = root
-                .GetProperty("redirect_links")
-                .EnumerateArray()
-                .FirstOrDefault(l => l.TryGetProperty("method", out var m) && m.GetString() == "redirect")
-                .GetProperty("href").GetString();
+                .GetProperty("_links")
+                .GetProperty("redirect")
+                .GetProperty("href")
+                .GetString();
+
+            _logger.LogInformation("BOG redirect URL: {Url}", redirectUrl);
 
             return new PaymentSessionResult(true, redirectUrl, bogOrderId, null);
         }

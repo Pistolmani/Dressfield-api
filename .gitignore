@@ -12,4 +12,5 @@ wwwroot/
 # Production secrets live in Azure App Service → Configuration → Application settings
 appsettings.*.local.json
 appsettings.Production.json
+appsettings.Development.json
 secrets.json
