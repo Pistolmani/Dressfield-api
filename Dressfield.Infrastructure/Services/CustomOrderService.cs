@@ -2,14 +2,18 @@ using Dressfield.Application.DTOs;
 using Dressfield.Application.Interfaces;
 using Dressfield.Core.Entities;
 using Dressfield.Core.Enums;
+using Dressfield.Core.Interfaces;
 using Dressfield.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Dressfield.Infrastructure.Services;
 
 public class CustomOrderService : ICustomOrderService
 {
     private readonly DressfieldDbContext _db;
+    private readonly IPaymentService _payment;
+    private readonly ILogger<CustomOrderService> _logger;
     private static readonly IReadOnlyDictionary<string, decimal> EmbroiderySizeExtraPrices =
         new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase)
         {
@@ -19,9 +23,11 @@ public class CustomOrderService : ICustomOrderService
             ["XL"] = 35m
         };
 
-    public CustomOrderService(DressfieldDbContext db)
+    public CustomOrderService(DressfieldDbContext db, IPaymentService payment, ILogger<CustomOrderService> logger)
     {
         _db = db;
+        _payment = payment;
+        _logger = logger;
     }
 
     // ── Admin ────────────────────────────────────────────────────────────────
@@ -91,7 +97,7 @@ public class CustomOrderService : ICustomOrderService
 
     // ── Public ───────────────────────────────────────────────────────────────
 
-    public async Task<CustomOrderDetailDto> CreateAsync(CreateCustomOrderRequest request, string? userId)
+    public async Task<CustomOrderCheckoutResponse> CreateAsync(CreateCustomOrderRequest request, string? userId)
     {
         decimal baseProductPrice = 0m;
 
@@ -110,6 +116,9 @@ public class CustomOrderService : ICustomOrderService
 
         var calculatedTotalPrice = baseProductPrice + CalculateEmbroideryExtra(request.Designs);
 
+        // Prefix with "c-" so the payment callback can distinguish custom orders from regular orders
+        var orderKey = "c-" + Guid.NewGuid().ToString("N");
+
         var order = new CustomOrder
         {
             UserId = userId,
@@ -119,7 +128,8 @@ public class CustomOrderService : ICustomOrderService
             ContactEmail = request.ContactEmail.Trim().ToLowerInvariant(),
             TotalPrice = calculatedTotalPrice,
             CustomerNotes = request.CustomerNotes?.Trim(),
-            Status = CustomOrderStatus.Pending,
+            Status = CustomOrderStatus.AwaitingPayment,
+            BogOrderKey = orderKey,
             Designs = request.Designs.Select(d => new CustomOrderDesign
             {
                 DesignImageUrl = d.DesignImageUrl.Trim(),
@@ -137,7 +147,55 @@ public class CustomOrderService : ICustomOrderService
         _db.CustomOrders.Add(order);
         await _db.SaveChangesAsync();
 
-        return (await GetAdminByIdAsync(order.Id))!;
+        // Create BOG payment session
+        var description = $"DressField კასტომ შეკვეთა #{order.Id}";
+        var paymentResult = await _payment.CreateSessionAsync(order.Id, order.TotalPrice, orderKey, description);
+
+        if (paymentResult.Success && paymentResult.BogOrderId != null)
+        {
+            order.BogOrderId = paymentResult.BogOrderId;
+            await _db.SaveChangesAsync();
+        }
+        else
+        {
+            _logger.LogWarning("BOG session creation failed for custom order {OrderId}: {Error}",
+                order.Id, paymentResult.ErrorMessage);
+        }
+
+        return new CustomOrderCheckoutResponse(order.Id, paymentResult.RedirectUrl, paymentResult.Success);
+    }
+
+    public async Task HandlePaymentCallbackAsync(string bogOrderId, string? orderKey)
+    {
+        var order = await _db.CustomOrders
+            .FirstOrDefaultAsync(o => o.BogOrderId == bogOrderId);
+
+        if (order is null)
+        {
+            _logger.LogWarning("Custom order callback: no order found for BogOrderId {BogOrderId}", bogOrderId);
+            return;
+        }
+
+        // Verify key matches to prevent spoofing
+        if (!string.IsNullOrEmpty(orderKey) && order.BogOrderKey != orderKey)
+        {
+            _logger.LogWarning("Custom order callback key mismatch for order {OrderId}", order.Id);
+            return;
+        }
+
+        var verification = await _payment.VerifyCallbackAsync(bogOrderId);
+
+        if (verification.IsApproved && order.Status == CustomOrderStatus.AwaitingPayment)
+        {
+            order.Status = CustomOrderStatus.Pending; // paid → moves to review queue
+            order.UpdatedAt = DateTime.UtcNow;
+            await _db.SaveChangesAsync();
+            _logger.LogInformation("Custom order {OrderId} payment confirmed, moved to Pending review", order.Id);
+        }
+        else
+        {
+            _logger.LogInformation("Custom order {OrderId} callback status: {Status}", order.Id, verification.Status);
+        }
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────

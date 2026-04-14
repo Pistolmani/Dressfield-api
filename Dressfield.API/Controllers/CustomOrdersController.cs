@@ -21,14 +21,14 @@ public class CustomOrdersController : ControllerBase
 
     // ── Public / Customer ────────────────────────────────────────────────────
 
-    /// <summary>Submit a new custom order. Works for both guests and logged-in users.</summary>
+    /// <summary>Submit a new custom order. Works for both guests and logged-in users. Returns BOG payment redirect URL.</summary>
     [HttpPost]
     [EnableRateLimiting("orders")]
-    public async Task<ActionResult<CustomOrderDetailDto>> Create([FromBody] CreateCustomOrderRequest request)
+    public async Task<ActionResult<CustomOrderCheckoutResponse>> Create([FromBody] CreateCustomOrderRequest request)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var order = await _customOrderService.CreateAsync(request, userId);
-        return CreatedAtAction(nameof(GetAdminById), new { id = order.Id }, order);
+        var result = await _customOrderService.CreateAsync(request, userId);
+        return Ok(result);
     }
 
     /// <summary>Get the logged-in customer's own orders.</summary>

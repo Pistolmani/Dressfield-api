@@ -23,6 +23,10 @@ public class CustomOrder
     public string? CustomerNotes { get; set; }
     public string? AdminNotes { get; set; }
 
+    // BOG iPay payment fields
+    public string? BogOrderKey { get; set; }
+    public string? BogOrderId { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

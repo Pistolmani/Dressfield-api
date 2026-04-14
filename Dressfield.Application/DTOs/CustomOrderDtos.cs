@@ -69,3 +69,9 @@ public record CreateCustomOrderRequest(
 public record UpdateCustomOrderStatusRequest(
     CustomOrderStatus Status,
     string? AdminNotes);
+
+// Returned from POST /api/custom-orders — mirrors CheckoutResponse for regular orders
+public record CustomOrderCheckoutResponse(
+    int OrderId,
+    string? PaymentRedirectUrl,
+    bool PaymentSuccess);

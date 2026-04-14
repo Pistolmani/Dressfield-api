@@ -3,10 +3,11 @@ namespace Dressfield.Core.Enums;
 public enum CustomOrderStatus
 {
     Pending = 0,
-    Reviewing = 1,
-    Approved = 2,
-    InProduction = 3,
-    Completed = 4,
-    Rejected = 5,
-    Cancelled = 6
+    AwaitingPayment = 1,
+    Reviewing = 2,
+    Approved = 3,
+    InProduction = 4,
+    Completed = 5,
+    Rejected = 6,
+    Cancelled = 7
 }

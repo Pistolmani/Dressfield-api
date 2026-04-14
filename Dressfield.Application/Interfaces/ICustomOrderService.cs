@@ -15,5 +15,6 @@ public interface ICustomOrderService
     Task<CustomOrderDetailDto?> GetByIdForUserAsync(int id, string userId);
 
     // Public — supports both authenticated users and guests
-    Task<CustomOrderDetailDto> CreateAsync(CreateCustomOrderRequest request, string? userId);
+    Task<CustomOrderCheckoutResponse> CreateAsync(CreateCustomOrderRequest request, string? userId);
+    Task HandlePaymentCallbackAsync(string bogOrderId, string? orderKey);
 }

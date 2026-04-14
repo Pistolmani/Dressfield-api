@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Dressfield.Application.Interfaces;
+using Dressfield.Application.DTOs;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Dressfield.API.Controllers;
@@ -23,15 +24,18 @@ public class PaymentsController : ControllerBase
         """;
 
     private readonly IOrderService _orders;
+    private readonly ICustomOrderService _customOrders;
     private readonly ILogger<PaymentsController> _logger;
     private readonly string _callbackPublicKeyPem;
 
     public PaymentsController(
         IOrderService orders,
+        ICustomOrderService customOrders,
         ILogger<PaymentsController> logger,
         IConfiguration configuration)
     {
         _orders = orders;
+        _customOrders = customOrders;
         _logger = logger;
         _callbackPublicKeyPem = configuration["BogIPay:CallbackPublicKeyPem"] ?? DefaultCallbackPublicKeyPem;
     }
@@ -74,7 +78,11 @@ public class PaymentsController : ControllerBase
 
         try
         {
-            await _orders.HandlePaymentCallbackAsync(orderId, key);
+            // Keys prefixed with "c-" belong to custom orders; all others are regular orders
+            if (key != null && key.StartsWith("c-", StringComparison.Ordinal))
+                await _customOrders.HandlePaymentCallbackAsync(orderId, key);
+            else
+                await _orders.HandlePaymentCallbackAsync(orderId, key);
         }
         catch (Exception ex)
         {

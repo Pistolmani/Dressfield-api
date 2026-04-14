@@ -177,6 +177,12 @@ namespace Dressfield.Infrastructure.Migrations
                     b.Property<int?>("BaseProductId")
                         .HasColumnType("int");
 
+                    b.Property<string>("BogOrderId")
+                        .HasColumnType("longtext");
+
+                    b.Property<string>("BogOrderKey")
+                        .HasColumnType("longtext");
+
                     b.Property<string>("ContactEmail")
                         .IsRequired()
                         .HasMaxLength(200)
