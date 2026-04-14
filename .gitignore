@@ -7,6 +7,10 @@ logs/
 *.out.log
 *.err.log
 wwwroot/
+publish_out/
+publish_output/
+deploy.zip
+dressfield-api-deploy.zip
 
 # Local secret overrides — never commit these
 # Production secrets live in Azure App Service → Configuration → Application settings
