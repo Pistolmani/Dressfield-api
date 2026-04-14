@@ -13,11 +13,13 @@ public class AuthController : ControllerBase
 {
     private readonly IAuthService _authService;
     private readonly IConfiguration _config;
+    private readonly ILogger<AuthController> _logger;
 
-    public AuthController(IAuthService authService, IConfiguration config)
+    public AuthController(IAuthService authService, IConfiguration config, ILogger<AuthController> logger)
     {
         _authService = authService;
         _config      = config;
+        _logger      = logger;
     }
 
     [HttpPost("register")]
@@ -84,8 +86,9 @@ public class AuthController : ControllerBase
         {
             await _authService.ResetPasswordAsync(request);
         }
-        catch
+        catch (Exception ex)
         {
+            _logger.LogWarning(ex, "ResetPassword failed (not revealed to caller)");
             // Never reveal whether the email/token combination is valid
         }
         return Ok();
