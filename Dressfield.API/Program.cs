@@ -29,7 +29,6 @@ var builder = WebApplication.CreateBuilder(args);
 var webRootPath = Path.Combine(builder.Environment.ContentRootPath, "wwwroot");
 Directory.CreateDirectory(Path.Combine(webRootPath, "uploads", "designs"));
 
-// â”€â”€ Logging â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .WriteTo.Console()
@@ -51,14 +50,12 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MaxRequestBodySize = 20 * 1024 * 1024);
 
-// â”€â”€ Database â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
 builder.Services.AddDbContext<DressfieldDbContext>(options =>
     options.UseMySql(connectionString, new MySqlServerVersion(new Version(8, 0, 36))));
 builder.Services.AddHealthChecks()
     .AddDbContextCheck<DressfieldDbContext>("database");
 
-// â”€â”€ Identity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
     {
         options.Password.RequireDigit = true;
@@ -71,7 +68,6 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
     .AddEntityFrameworkStores<DressfieldDbContext>()
     .AddDefaultTokenProviders();
 
-// â”€â”€ JWT Authentication â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // IMPORTANT: Jwt:Secret must NEVER be left as empty in production.
 // Set it via Azure App Service â†’ Configuration â†’ Application settings: Jwt__Secret
 var jwtSecret = builder.Configuration["Jwt:Secret"];
@@ -106,7 +102,6 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddAuthorization();
 
-// â”€â”€ CORS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
@@ -115,11 +110,13 @@ builder.Services.AddCors(options =>
                       ?? ["http://localhost:3000",
                           "https://dressfield-ga8o-git-main-dressfield.vercel.app",
                           "https://dressfield.ge"];
-        policy.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
+        policy.WithOrigins(origins)
+              .AllowAnyHeader()
+              .WithMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
+              .AllowCredentials();
     });
 });
 
-// â”€â”€ Rate Limiting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 builder.Services.AddRateLimiter(options =>
 {
     // Auth endpoints â€” 10 requests per minute per IP (prevents brute-force)
@@ -149,7 +146,6 @@ builder.Services.AddRateLimiter(options =>
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 });
 
-// â”€â”€ Application Services â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 var smtpHost = builder.Configuration["Smtp:Host"];
 if (string.IsNullOrWhiteSpace(smtpHost))
 {
@@ -239,13 +235,11 @@ builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
-// â”€â”€ Middleware pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
 // Must be first â€” resolve real client IP from Azure load balancer
 app.UseForwardedHeaders();
 app.UseExceptionHandler();
 
-if (!app.Environment.IsProduction())
+if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI(c =>
@@ -265,11 +259,13 @@ if (!app.Environment.IsDevelopment())
 app.Use(async (context, next) =>
 {
     var headers = context.Response.Headers;
-    headers["X-Content-Type-Options"] = "nosniff";          // No MIME sniffing
-    headers["X-Frame-Options"]        = "DENY";             // No clickjacking
-    headers["Referrer-Policy"]        = "strict-origin-when-cross-origin";
-    headers["X-XSS-Protection"]       = "0";                // Disable legacy XSS auditor
-    headers["Permissions-Policy"]     = "geolocation=(), camera=(), microphone=()";
+    headers["X-Content-Type-Options"]    = "nosniff";
+    headers["X-Frame-Options"]           = "DENY";
+    headers["Referrer-Policy"]           = "strict-origin-when-cross-origin";
+    headers["X-XSS-Protection"]          = "0";
+    headers["Permissions-Policy"]        = "geolocation=(), camera=(), microphone=()";
+    headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+    headers["Content-Security-Policy"]   = "default-src 'none'; frame-ancestors 'none'";
     await next();
 });
 
@@ -321,7 +317,6 @@ static bool IsDatabaseUnavailable(Exception exception)
     return false;
 }
 
-// â”€â”€ Database seed (roles + first admin account) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 try
 {
     using var scope       = app.Services.CreateScope();
