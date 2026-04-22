@@ -5,7 +5,6 @@ using Dressfield.Core.Entities;
 using Dressfield.Infrastructure.Services;
 using Dressfield.Core.Interfaces;
 using Dressfield.Infrastructure.Data;
-using Dressfield.Infrastructure.Services;
 using FluentValidation;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.HttpOverrides;
