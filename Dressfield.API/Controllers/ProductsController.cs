@@ -2,6 +2,7 @@
 using Dressfield.Application.Interfaces;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 
 namespace Dressfield.API.Controllers;
 
@@ -10,10 +11,12 @@ namespace Dressfield.API.Controllers;
 public class ProductsController : ControllerBase
 {
     private readonly IProductService _productService;
+    private readonly IAuditLogService _auditLog;
 
-    public ProductsController(IProductService productService)
+    public ProductsController(IProductService productService, IAuditLogService auditLog)
     {
         _productService = productService;
+        _auditLog = auditLog;
     }
 
     [HttpGet]
@@ -54,6 +57,11 @@ public class ProductsController : ControllerBase
         try
         {
             var product = await _productService.CreateAsync(request);
+            await _auditLog.LogAsync("ProductCreated", "Product",
+                entityId: product.Id.ToString(),
+                entityName: product.Name,
+                actorId: User.FindFirstValue(ClaimTypes.NameIdentifier),
+                actorEmail: User.FindFirstValue(ClaimTypes.Email));
             return CreatedAtAction(nameof(GetAdminById), new { id = product.Id }, product);
         }
         catch (InvalidOperationException ex)
@@ -68,7 +76,13 @@ public class ProductsController : ControllerBase
     {
         try
         {
-            return Ok(await _productService.UpdateAsync(id, request));
+            var product = await _productService.UpdateAsync(id, request);
+            await _auditLog.LogAsync("ProductUpdated", "Product",
+                entityId: id.ToString(),
+                entityName: product.Name,
+                actorId: User.FindFirstValue(ClaimTypes.NameIdentifier),
+                actorEmail: User.FindFirstValue(ClaimTypes.Email));
+            return Ok(product);
         }
         catch (KeyNotFoundException ex)
         {
@@ -85,6 +99,10 @@ public class ProductsController : ControllerBase
     public async Task<IActionResult> Delete(int id)
     {
         await _productService.DeleteAsync(id);
+        await _auditLog.LogAsync("ProductDeleted", "Product",
+            entityId: id.ToString(),
+            actorId: User.FindFirstValue(ClaimTypes.NameIdentifier),
+            actorEmail: User.FindFirstValue(ClaimTypes.Email));
         return NoContent();
     }
 }

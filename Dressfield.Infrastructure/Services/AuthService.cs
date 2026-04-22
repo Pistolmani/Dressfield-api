@@ -160,17 +160,14 @@ public class AuthService : IAuthService
         if (!payload.EmailVerified)
             throw new UnauthorizedAccessException("Google account email is not verified.");
 
-        // Returning Google user — fast path
         var user = await _userManager.FindByLoginAsync("Google", payload.Subject);
 
         if (user == null)
         {
-            // Existing account with same email — link Google to it
             user = await _userManager.FindByEmailAsync(payload.Email);
 
             if (user == null)
             {
-                // New user — create account without a password
                 var nameParts = (payload.Name ?? "").Split(' ', 2);
                 user = new ApplicationUser
                 {
@@ -189,7 +186,6 @@ public class AuthService : IAuthService
                 await _userManager.AddToRoleAsync(user, "Customer");
             }
 
-            // Link Google provider to this user (new or existing-by-email)
             var loginInfo = new UserLoginInfo("Google", payload.Subject, "Google");
             var addResult = await _userManager.AddLoginAsync(user, loginInfo);
             if (!addResult.Succeeded)

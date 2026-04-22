@@ -21,6 +21,7 @@ public class DressfieldDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<PromoCode> PromoCodes => Set<PromoCode>();
     public DbSet<Cart> Carts => Set<Cart>();
     public DbSet<CartItem> CartItems => Set<CartItem>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -163,6 +164,21 @@ public class DressfieldDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.VariantId).HasDefaultValue(0).IsRequired();
             entity.HasIndex(e => new { e.CartId, e.ProductId, e.VariantId }).IsUnique();
             entity.HasOne(e => e.Product).WithMany().HasForeignKey(e => e.ProductId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<AuditLog>(entity =>
+        {
+            entity.Property(e => e.Action).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.EntityType).HasMaxLength(64).IsRequired();
+            entity.Property(e => e.EntityId).HasMaxLength(64);
+            entity.Property(e => e.EntityName).HasMaxLength(200);
+            entity.Property(e => e.ActorId).HasMaxLength(450);
+            entity.Property(e => e.ActorEmail).HasMaxLength(200);
+            entity.Property(e => e.Details).HasMaxLength(1000);
+            entity.Property(e => e.IpAddress).HasMaxLength(45);
+            entity.HasIndex(e => e.CreatedAt);
+            entity.HasIndex(e => e.EntityType);
+            entity.HasIndex(e => e.Action);
         });
     }
 }

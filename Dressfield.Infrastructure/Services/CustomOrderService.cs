@@ -14,6 +14,7 @@ public class CustomOrderService : ICustomOrderService
     private readonly DressfieldDbContext _db;
     private readonly IPaymentService _payment;
     private readonly ILogger<CustomOrderService> _logger;
+
     private static readonly IReadOnlyDictionary<string, decimal> EmbroiderySizeExtraPrices =
         new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase)
         {
@@ -29,8 +30,6 @@ public class CustomOrderService : ICustomOrderService
         _payment = payment;
         _logger = logger;
     }
-
-    // ── Admin ────────────────────────────────────────────────────────────────
 
     public async Task<IReadOnlyCollection<CustomOrderSummaryDto>> GetAdminAsync(CustomOrderStatus? status)
     {
@@ -71,8 +70,6 @@ public class CustomOrderService : ICustomOrderService
         await _db.SaveChangesAsync();
     }
 
-    // ── Customer ─────────────────────────────────────────────────────────────
-
     public async Task<IReadOnlyCollection<CustomOrderSummaryDto>> GetByUserAsync(string userId)
     {
         return await _db.CustomOrders
@@ -95,8 +92,6 @@ public class CustomOrderService : ICustomOrderService
         return order is null ? null : MapDetail(order);
     }
 
-    // ── Public ───────────────────────────────────────────────────────────────
-
     public async Task<CustomOrderCheckoutResponse> CreateAsync(CreateCustomOrderRequest request, string? userId)
     {
         decimal baseProductPrice = 0m;
@@ -116,7 +111,7 @@ public class CustomOrderService : ICustomOrderService
 
         var calculatedTotalPrice = baseProductPrice + CalculateEmbroideryExtra(request.Designs);
 
-        // Prefix with "c-" so the payment callback can distinguish custom orders from regular orders
+        // Custom order keys are prefixed with "c-" so the payment callback can distinguish them
         var orderKey = "c-" + Guid.NewGuid().ToString("N");
 
         var order = new CustomOrder
@@ -128,8 +123,8 @@ public class CustomOrderService : ICustomOrderService
             ContactEmail = request.ContactEmail.Trim().ToLowerInvariant(),
             TotalPrice = calculatedTotalPrice,
             CustomerNotes = request.CustomerNotes?.Trim(),
-            Status = CustomOrderStatus.AwaitingPayment,
             BogOrderKey = orderKey,
+            Status = CustomOrderStatus.Pending,
             Designs = request.Designs.Select(d => new CustomOrderDesign
             {
                 DesignImageUrl = d.DesignImageUrl.Trim(),
@@ -147,19 +142,13 @@ public class CustomOrderService : ICustomOrderService
         _db.CustomOrders.Add(order);
         await _db.SaveChangesAsync();
 
-        // Create BOG payment session
-        var description = $"DressField კასტომ შეკვეთა #{order.Id}";
+        var description = $"DressField Custom Order #{order.Id}";
         var paymentResult = await _payment.CreateSessionAsync(order.Id, order.TotalPrice, orderKey, description);
 
         if (paymentResult.Success && paymentResult.BogOrderId != null)
         {
             order.BogOrderId = paymentResult.BogOrderId;
             await _db.SaveChangesAsync();
-        }
-        else
-        {
-            _logger.LogWarning("BOG session creation failed for custom order {OrderId}: {Error}",
-                order.Id, paymentResult.ErrorMessage);
         }
 
         return new CustomOrderCheckoutResponse(order.Id, paymentResult.RedirectUrl, paymentResult.Success);
@@ -170,35 +159,36 @@ public class CustomOrderService : ICustomOrderService
         var order = await _db.CustomOrders
             .FirstOrDefaultAsync(o => o.BogOrderId == bogOrderId);
 
-        if (order is null)
+        if (order == null)
         {
-            _logger.LogWarning("Custom order callback: no order found for BogOrderId {BogOrderId}", bogOrderId);
+            _logger.LogWarning("Payment callback for unknown BOG custom order {BogOrderId}", bogOrderId);
             return;
         }
 
-        // Verify key matches to prevent spoofing
-        if (!string.IsNullOrEmpty(orderKey) && order.BogOrderKey != orderKey)
+        if (string.IsNullOrWhiteSpace(orderKey) || order.BogOrderKey != orderKey)
         {
-            _logger.LogWarning("Custom order callback key mismatch for order {OrderId}", order.Id);
+            _logger.LogWarning("Payment callback key validation failed for custom order {OrderId}", order.Id);
             return;
         }
 
-        var verification = await _payment.VerifyCallbackAsync(bogOrderId);
+        // Only process if still in an awaiting-payment state
+        if (order.Status != CustomOrderStatus.Pending)
+        {
+            _logger.LogInformation("Duplicate callback for custom order {OrderId} (status: {Status}) — skipping",
+                order.Id, order.Status);
+            return;
+        }
 
-        if (verification.IsApproved && order.Status == CustomOrderStatus.AwaitingPayment)
-        {
-            order.Status = CustomOrderStatus.Pending; // paid → moves to review queue
-            order.UpdatedAt = DateTime.UtcNow;
-            await _db.SaveChangesAsync();
-            _logger.LogInformation("Custom order {OrderId} payment confirmed, moved to Pending review", order.Id);
-        }
-        else
-        {
-            _logger.LogInformation("Custom order {OrderId} callback status: {Status}", order.Id, verification.Status);
-        }
+        var result = await _payment.VerifyCallbackAsync(bogOrderId);
+
+        order.Status = result.IsApproved ? CustomOrderStatus.Reviewing : CustomOrderStatus.Cancelled;
+        order.UpdatedAt = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync();
+
+        _logger.LogInformation("Custom order {OrderId} payment {Result} (BOG: {BogOrderId})",
+            order.Id, result.IsApproved ? "approved" : "declined", bogOrderId);
     }
-
-    // ── Private helpers ──────────────────────────────────────────────────────
 
     private static CustomOrderDetailDto MapDetail(CustomOrder o) =>
         new(

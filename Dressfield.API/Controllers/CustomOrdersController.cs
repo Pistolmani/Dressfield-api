@@ -13,22 +13,22 @@ namespace Dressfield.API.Controllers;
 public class CustomOrdersController : ControllerBase
 {
     private readonly ICustomOrderService _customOrderService;
+    private readonly IAuditLogService _auditLog;
 
-    public CustomOrdersController(ICustomOrderService customOrderService)
+    public CustomOrdersController(ICustomOrderService customOrderService, IAuditLogService auditLog)
     {
         _customOrderService = customOrderService;
+        _auditLog = auditLog;
     }
 
-    // ── Public / Customer ────────────────────────────────────────────────────
-
-    /// <summary>Submit a new custom order. Works for both guests and logged-in users. Returns BOG payment redirect URL.</summary>
+    /// <summary>Submit a new custom order. Works for both guests and logged-in users.</summary>
     [HttpPost]
     [EnableRateLimiting("orders")]
     public async Task<ActionResult<CustomOrderCheckoutResponse>> Create([FromBody] CreateCustomOrderRequest request)
     {
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var result = await _customOrderService.CreateAsync(request, userId);
-        return Ok(result);
+        var response = await _customOrderService.CreateAsync(request, userId);
+        return Ok(response);
     }
 
     /// <summary>Get the logged-in customer's own orders.</summary>
@@ -49,8 +49,6 @@ public class CustomOrdersController : ControllerBase
         var order = await _customOrderService.GetByIdForUserAsync(id, userId);
         return order is null ? NotFound() : Ok(order);
     }
-
-    // ── Admin ────────────────────────────────────────────────────────────────
 
     /// <summary>List all custom orders (admin). Optionally filter by status.</summary>
     [Authorize(Roles = "Admin")]
@@ -74,6 +72,12 @@ public class CustomOrdersController : ControllerBase
     public async Task<IActionResult> UpdateStatus(int id, [FromBody] UpdateCustomOrderStatusRequest request)
     {
         await _customOrderService.UpdateStatusAsync(id, request);
+        await _auditLog.LogAsync("CustomOrderStatusChanged", "CustomOrder",
+            entityId: id.ToString(),
+            entityName: $"Custom Order #{id}",
+            actorId: User.FindFirstValue(ClaimTypes.NameIdentifier),
+            actorEmail: User.FindFirstValue(ClaimTypes.Email),
+            details: $"Status → {request.Status}{(string.IsNullOrWhiteSpace(request.AdminNotes) ? "" : $"; Notes: {request.AdminNotes}")}");
         return NoContent();
     }
 }

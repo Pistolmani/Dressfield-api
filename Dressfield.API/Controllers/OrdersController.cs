@@ -16,18 +16,19 @@ public class OrdersController : ControllerBase
     private readonly IOrderService _orders;
     private readonly IValidator<CreateOrderRequest> _createValidator;
     private readonly IValidator<UpdateOrderStatusRequest> _updateValidator;
+    private readonly IAuditLogService _auditLog;
 
     public OrdersController(
         IOrderService orders,
         IValidator<CreateOrderRequest> createValidator,
-        IValidator<UpdateOrderStatusRequest> updateValidator)
+        IValidator<UpdateOrderStatusRequest> updateValidator,
+        IAuditLogService auditLog)
     {
         _orders          = orders;
         _createValidator = createValidator;
         _updateValidator = updateValidator;
+        _auditLog        = auditLog;
     }
-
-    // ── Checkout (guest + authenticated) ─────────────────────────────────────
 
     /// <summary>POST /api/orders — place an order, returns BOG payment redirect URL.</summary>
     [HttpPost]
@@ -50,8 +51,6 @@ public class OrdersController : ControllerBase
             return BadRequest(new { message = ex.Message });
         }
     }
-
-    // ── Customer endpoints ────────────────────────────────────────────────────
 
     /// <summary>GET /api/orders/my — authenticated user's orders.</summary>
     [HttpGet("my")]
@@ -89,8 +88,6 @@ public class OrdersController : ControllerBase
         return status is null ? NotFound() : Ok(status);
     }
 
-    // ── Admin endpoints ───────────────────────────────────────────────────────
-
     /// <summary>GET /api/orders/admin?status=Pending — all orders, optionally filtered.</summary>
     [HttpGet("admin")]
     [Authorize(Roles = "Admin")]
@@ -122,6 +119,12 @@ public class OrdersController : ControllerBase
         {
             var adminUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
             await _orders.UpdateStatusAsync(id, request with { ChangedByUserId = adminUserId });
+            await _auditLog.LogAsync("OrderStatusChanged", "Order",
+                entityId: id.ToString(),
+                entityName: $"Order #{id}",
+                actorId: adminUserId,
+                actorEmail: User.FindFirstValue(ClaimTypes.Email),
+                details: $"Status → {request.Status}{(string.IsNullOrWhiteSpace(request.AdminNotes) ? "" : $"; Notes: {request.AdminNotes}")}");
             return NoContent();
         }
         catch (KeyNotFoundException)

@@ -2,8 +2,6 @@ using Dressfield.Core.Enums;
 
 namespace Dressfield.Application.DTOs;
 
-// ── Response DTOs ─────────────────────────────────────────────────────────────
-
 public record OrderItemDto(
     int Id,
     int? ProductId,
@@ -56,8 +54,6 @@ public record OrderDetailDto(
     DateTime UpdatedAt,
     IReadOnlyCollection<OrderItemDto> Items);
 
-// ── Request DTOs ──────────────────────────────────────────────────────────────
-
 public record CartItemRequest(
     int ProductId,
     int? VariantId,
@@ -79,8 +75,6 @@ public record UpdateOrderStatusRequest(
     OrderStatus Status,
     string? AdminNotes,
     string? ChangedByUserId = null);
-
-// ── Checkout Response ─────────────────────────────────────────────────────────
 
 public record CheckoutResponse(
     int OrderId,

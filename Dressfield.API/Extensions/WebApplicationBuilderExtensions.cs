@@ -2,6 +2,7 @@ using System.Text;
 using System.Threading.RateLimiting;
 using Dressfield.Application.Interfaces;
 using Dressfield.Core.Entities;
+using Dressfield.Infrastructure.Services;
 using Dressfield.Core.Interfaces;
 using Dressfield.Infrastructure.Data;
 using Dressfield.Infrastructure.Services;
@@ -178,6 +179,7 @@ public static class WebApplicationBuilderExtensions
         builder.Services.AddScoped<ICustomOrderService, CustomOrderService>();
         builder.Services.AddScoped<IOrderService, OrderService>();
         builder.Services.AddScoped<IPromoCodeService, PromoCodeService>();
+        builder.Services.AddScoped<IAuditLogService, AuditLogService>();
 
         var azureConnectionString = builder.Configuration["AzureStorage:ConnectionString"];
         if (string.IsNullOrWhiteSpace(azureConnectionString))

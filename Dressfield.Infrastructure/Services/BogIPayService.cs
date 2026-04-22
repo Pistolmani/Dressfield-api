@@ -36,8 +36,6 @@ public class BogIPayService : IPaymentService
         _ordersUrl = config["BogIPay:OrdersUrl"] ?? "https://api.bog.ge/payments/v1/ecommerce/orders";
     }
 
-    // ── Public API ────────────────────────────────────────────────────────────
-
     public async Task<PaymentSessionResult> CreateSessionAsync(
         int orderId, decimal amount, string orderKey, string description)
     {
@@ -139,8 +137,6 @@ public class BogIPayService : IPaymentService
             return new PaymentVerificationResult(false, bogOrderId, null, "exception");
         }
     }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
 
     private async Task<string> GetAccessTokenAsync()
     {

@@ -2,8 +2,6 @@ using Dressfield.Core.Enums;
 
 namespace Dressfield.Application.DTOs;
 
-// ── Response DTOs ────────────────────────────────────────────────────────────
-
 public record CustomOrderDesignDto(
     int Id,
     string DesignImageUrl,
@@ -43,8 +41,6 @@ public record CustomOrderDetailDto(
     DateTime CreatedAt,
     DateTime UpdatedAt,
     IReadOnlyCollection<CustomOrderDesignDto> Designs);
-
-// ── Request DTOs ─────────────────────────────────────────────────────────────
 
 public record CreateCustomOrderDesignRequest(
     string DesignImageUrl,

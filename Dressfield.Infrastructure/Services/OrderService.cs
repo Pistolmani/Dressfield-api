@@ -25,8 +25,6 @@ public class OrderService : IOrderService
         _shippingCost = decimal.TryParse(configuration["Orders:ShippingCost"], out var sc) ? sc : 5m;
     }
 
-    // ── Admin ─────────────────────────────────────────────────────────────────
-
     public async Task<IReadOnlyCollection<OrderSummaryDto>> GetAdminAsync(OrderStatus? status)
     {
         var query = _db.Orders.AsNoTracking().AsQueryable();
@@ -70,7 +68,6 @@ public class OrderService : IOrderService
         order.AdminNotes = request.AdminNotes?.Trim();
         order.UpdatedAt = DateTime.UtcNow;
 
-        // Audit log
         _db.OrderStatusLogs.Add(new OrderStatusLog
         {
             OrderId = order.Id,
@@ -80,14 +77,11 @@ public class OrderService : IOrderService
             Notes = request.AdminNotes?.Trim(),
         });
 
-        // Queue shipping notification email via outbox
         if (request.Status == OrderStatus.Shipped && !string.IsNullOrEmpty(order.ContactEmail))
             QueueShippingEmail(order.ContactEmail, order.Id);
 
         await _db.SaveChangesAsync();
     }
-
-    // ── Customer ──────────────────────────────────────────────────────────────
 
     public async Task<IReadOnlyCollection<OrderSummaryDto>> GetByUserAsync(string userId)
     {
@@ -133,11 +127,8 @@ public class OrderService : IOrderService
             .FirstOrDefaultAsync();
     }
 
-    // ── Checkout ──────────────────────────────────────────────────────────────
-
     public async Task<CheckoutResponse> CreateAsync(CreateOrderRequest request, string? userId)
     {
-        // 1. Load and validate products
         var productIds = request.Items.Select(i => i.ProductId).Distinct().ToList();
         var products = await _db.Products
             .Include(p => p.Variants)
@@ -148,7 +139,6 @@ public class OrderService : IOrderService
         if (products.Count != productIds.Count)
             throw new InvalidOperationException("ერთ-ერთი პროდუქტი მიუწვდომელია.");
 
-        // 2. Build order items with price snapshots
         var items = new List<OrderItem>();
         decimal subtotal = 0;
 
@@ -225,7 +215,6 @@ public class OrderService : IOrderService
         _db.Orders.Add(order);
         await _db.SaveChangesAsync();
 
-        // 3. Create BOG payment session
         var description = $"DressField შეკვეთა #{order.Id}";
         var paymentResult = await _payment.CreateSessionAsync(order.Id, order.TotalAmount, orderKey, description);
 
@@ -241,8 +230,6 @@ public class OrderService : IOrderService
             paymentResult.RedirectUrl,
             paymentResult.Success);
     }
-
-    // ── Payment Callback ──────────────────────────────────────────────────────
 
     public async Task HandlePaymentCallbackAsync(string bogOrderId, string? orderKey)
     {
@@ -277,7 +264,6 @@ public class OrderService : IOrderService
         order.Status    = result.IsApproved ? OrderStatus.Paid : OrderStatus.Cancelled;
         order.UpdatedAt = DateTime.UtcNow;
 
-        // Audit log
         _db.OrderStatusLogs.Add(new OrderStatusLog
         {
             OrderId = order.Id,
@@ -287,7 +273,6 @@ public class OrderService : IOrderService
             Notes = $"BOG callback: {(result.IsApproved ? "approved" : "declined")} (txn: {result.TransactionId})",
         });
 
-        // Queue confirmation email via outbox
         if (result.IsApproved && !string.IsNullOrEmpty(order.ContactEmail))
         {
             var itemsHtml = string.Join("", order.Items.Select(i =>
@@ -306,8 +291,6 @@ public class OrderService : IOrderService
         _logger.LogInformation("Order {OrderId} payment {Result} (BOG: {BogOrderId})",
             order.Id, result.IsApproved ? "approved" : "declined", bogOrderId);
     }
-
-    // ── Private helpers ───────────────────────────────────────────────────────
 
     private static OrderDetailDto MapDetail(Order order) =>
         new(
@@ -345,10 +328,6 @@ public class OrderService : IOrderService
                     i.Quantity,
                     i.LineTotal))
                 .ToList());
-
-    // ── Email outbox helpers ───────────────────────────────────────────────────
-    // Emails are inserted into PendingEmails and delivered by EmailOutboxWorker.
-    // This decouples order processing from SMTP availability.
 
     private void QueueConfirmationEmail(string to, int orderId, string itemsHtml, string total)
     {
