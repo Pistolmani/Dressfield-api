@@ -165,6 +165,7 @@ builder.Services.AddScoped<IOrderService, OrderService>();
 builder.Services.AddScoped<ICartService, CartService>();
 builder.Services.AddScoped<IPromoCodeService, PromoCodeService>();
 builder.Services.AddScoped<IAdminDashboardService, AdminDashboardService>();
+builder.Services.AddScoped<IAuditLogService, AuditLogService>();
 builder.Services.AddHostedService<EmailOutboxWorker>();
 
 // Storage service â€” Azure Blob in production, local filesystem only in development
