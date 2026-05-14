@@ -76,7 +76,7 @@ public class OrdersController : ControllerBase
     /// GET /api/orders/status?orderId=1&amp;key=... â€” public status lookup for payment return flow.
     /// </summary>
     [HttpGet("status")]
-    [EnableRateLimiting("orders")]
+    [EnableRateLimiting("status")]
     public async Task<IActionResult> GetPublicStatus(
         [FromQuery] int orderId,
         [FromQuery(Name = "key")] string? orderKey)

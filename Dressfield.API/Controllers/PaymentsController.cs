@@ -57,15 +57,19 @@ public class PaymentsController : ControllerBase
 
         if (string.IsNullOrWhiteSpace(rawBody))
         {
-            _logger.LogWarning("BOG callback received with empty body.");
-            return Ok();
+            _logger.LogError("BOG callback received with empty body from {RemoteIp}.",
+                HttpContext.Connection.RemoteIpAddress);
+            return BadRequest();
         }
 
         var signature = Request.Headers["Callback-Signature"].FirstOrDefault();
         if (!IsValidSignature(rawBody, signature))
         {
-            _logger.LogWarning("BOG callback rejected because signature verification failed.");
-            return Ok();
+            _logger.LogError(
+                "BOG callback REJECTED — signature verification failed. RemoteIp={RemoteIp} Signature={Signature}",
+                HttpContext.Connection.RemoteIpAddress,
+                signature ?? "<missing>");
+            return BadRequest();
         }
 
         if (!TryExtractBogOrderId(rawBody, out var orderId))

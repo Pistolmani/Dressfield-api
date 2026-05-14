@@ -143,6 +143,14 @@ builder.Services.AddRateLimiter(options =>
         o.QueueLimit  = 0;
     });
 
+    // Public order status lookup — tighter limit to prevent key brute-forcing
+    options.AddFixedWindowLimiter("status", o =>
+    {
+        o.Window      = TimeSpan.FromMinutes(1);
+        o.PermitLimit = 5;
+        o.QueueLimit  = 0;
+    });
+
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 });
 

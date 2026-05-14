@@ -20,9 +20,6 @@ public class CreateCustomOrderRequestValidator : AbstractValidator<CreateCustomO
             .EmailAddress().WithMessage("ელ-ფოსტის ფორმატი არასწორია")
             .MaximumLength(200).WithMessage("ელ-ფოსტა მაქსიმუმ 200 სიმბოლოა");
 
-        RuleFor(x => x.TotalPrice)
-            .GreaterThanOrEqualTo(0).WithMessage("ფასი ვერ იქნება უარყოფითი");
-
         RuleFor(x => x.CustomerNotes)
             .MaximumLength(1000).WithMessage("შენიშვნა მაქსიმუმ 1000 სიმბოლოა");
 
@@ -39,7 +36,10 @@ public class CreateCustomOrderDesignRequestValidator : AbstractValidator<CreateC
     {
         RuleFor(x => x.DesignImageUrl)
             .NotEmpty().WithMessage("დიზაინის სურათი აუცილებელია")
-            .MaximumLength(500).WithMessage("სურათის URL მაქსიმუმ 500 სიმბოლოა");
+            .MaximumLength(500).WithMessage("სურათის URL მაქსიმუმ 500 სიმბოლოა")
+            .Must(url => Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                         && uri.Scheme == Uri.UriSchemeHttps)
+            .WithMessage("დიზაინის სურათი უნდა იყოს სწორი HTTPS URL");
 
         RuleFor(x => x.Placement)
             .MaximumLength(50).WithMessage("განთავსება მაქსიმუმ 50 სიმბოლოა");

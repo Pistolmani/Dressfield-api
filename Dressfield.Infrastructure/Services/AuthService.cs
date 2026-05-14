@@ -85,13 +85,21 @@ public class AuthService : IAuthService
     public async Task<AuthResponse> RefreshTokenAsync(string refreshToken)
     {
         var tokenHash = HashToken(refreshToken);
+
+        // Atomic single-use revocation: UPDATE only if the token is still valid.
+        // ExecuteUpdateAsync issues a single UPDATE … WHERE, so concurrent requests
+        // racing on the same token will both attempt the update but only one row will
+        // be affected — the second will get rowsUpdated == 0 and be rejected.
+        var rowsUpdated = await _db.RefreshTokens
+            .Where(r => r.Token == tokenHash && !r.IsRevoked && r.ExpiresAt > DateTime.UtcNow)
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.IsRevoked, true));
+
+        if (rowsUpdated == 0)
+            throw new UnauthorizedAccessException("Invalid refresh token");
+
         var stored = await _db.RefreshTokens
             .Include(r => r.User)
-            .FirstOrDefaultAsync(r => r.Token == tokenHash && !r.IsRevoked && r.ExpiresAt > DateTime.UtcNow)
-            ?? throw new UnauthorizedAccessException("Invalid refresh token");
-
-        stored.IsRevoked = true;
-        await _db.SaveChangesAsync();
+            .FirstAsync(r => r.Token == tokenHash);
 
         return await GenerateAuthResponse(stored.User);
     }

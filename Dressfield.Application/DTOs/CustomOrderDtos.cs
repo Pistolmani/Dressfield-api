@@ -58,7 +58,6 @@ public record CreateCustomOrderRequest(
     string ContactName,
     string ContactPhone,
     string ContactEmail,
-    decimal TotalPrice,
     string? CustomerNotes,
     IReadOnlyCollection<CreateCustomOrderDesignRequest> Designs);
 
