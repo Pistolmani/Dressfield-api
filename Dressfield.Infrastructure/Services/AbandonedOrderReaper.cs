@@ -1,5 +1,7 @@
 using Dressfield.Core.Entities;
 using Dressfield.Core.Enums;
+using Dressfield.Core.Interfaces;
+using Dressfield.Application.Interfaces;
 using Dressfield.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -56,13 +58,21 @@ public class AbandonedOrderReaper : BackgroundService
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<DressfieldDbContext>();
+        var payment = scope.ServiceProvider.GetRequiredService<IPaymentService>();
+        var orders = scope.ServiceProvider.GetRequiredService<IOrderService>();
+        var customOrders = scope.ServiceProvider.GetRequiredService<ICustomOrderService>();
         var cutoff = DateTime.UtcNow - _abandonmentTimeout;
 
-        await CancelAbandonedOrdersAsync(db, cutoff, ct);
-        await CancelAbandonedCustomOrdersAsync(db, cutoff, ct);
+        await CancelAbandonedOrdersAsync(db, payment, orders, cutoff, ct);
+        await CancelAbandonedCustomOrdersAsync(db, payment, customOrders, cutoff, ct);
     }
 
-    private async Task CancelAbandonedOrdersAsync(DressfieldDbContext db, DateTime cutoff, CancellationToken ct)
+    private async Task CancelAbandonedOrdersAsync(
+        DressfieldDbContext db,
+        IPaymentService payment,
+        IOrderService orders,
+        DateTime cutoff,
+        CancellationToken ct)
     {
         var candidateIds = await db.Orders
             .Where(o => o.Status == OrderStatus.AwaitingPayment && o.UpdatedAt < cutoff)
@@ -71,6 +81,33 @@ public class AbandonedOrderReaper : BackgroundService
 
         foreach (var id in candidateIds)
         {
+            var paymentState = await db.Orders
+                .AsNoTracking()
+                .Where(o => o.Id == id && o.Status == OrderStatus.AwaitingPayment)
+                .Select(o => new { o.BogOrderId, o.BogOrderKey })
+                .FirstOrDefaultAsync(ct);
+
+            if (paymentState is null)
+                continue;
+
+            if (!string.IsNullOrWhiteSpace(paymentState.BogOrderId))
+            {
+                var verification = await payment.VerifyCallbackAsync(paymentState.BogOrderId);
+                if (verification.IsApproved)
+                {
+                    await orders.HandlePaymentCallbackAsync(paymentState.BogOrderId, paymentState.BogOrderKey);
+                    continue;
+                }
+
+                if (IsPendingBogStatus(verification.Status))
+                {
+                    _logger.LogInformation(
+                        "Skipping abandoned cancellation for order {OrderId}; BOG status is still {Status} (BOG: {BogOrderId})",
+                        id, verification.Status, paymentState.BogOrderId);
+                    continue;
+                }
+            }
+
             // Atomic claim: if a concurrent callback already claimed this order, skip it
             var claimed = await db.Orders
                 .Where(o => o.Id == id && o.Status == OrderStatus.AwaitingPayment)
@@ -120,7 +157,12 @@ public class AbandonedOrderReaper : BackgroundService
         }
     }
 
-    private async Task CancelAbandonedCustomOrdersAsync(DressfieldDbContext db, DateTime cutoff, CancellationToken ct)
+    private async Task CancelAbandonedCustomOrdersAsync(
+        DressfieldDbContext db,
+        IPaymentService payment,
+        ICustomOrderService customOrders,
+        DateTime cutoff,
+        CancellationToken ct)
     {
         var candidateIds = await db.CustomOrders
             .Where(o => o.Status == CustomOrderStatus.AwaitingPayment && o.UpdatedAt < cutoff)
@@ -129,6 +171,33 @@ public class AbandonedOrderReaper : BackgroundService
 
         foreach (var id in candidateIds)
         {
+            var paymentState = await db.CustomOrders
+                .AsNoTracking()
+                .Where(o => o.Id == id && o.Status == CustomOrderStatus.AwaitingPayment)
+                .Select(o => new { o.BogOrderId, o.BogOrderKey })
+                .FirstOrDefaultAsync(ct);
+
+            if (paymentState is null)
+                continue;
+
+            if (!string.IsNullOrWhiteSpace(paymentState.BogOrderId))
+            {
+                var verification = await payment.VerifyCallbackAsync(paymentState.BogOrderId);
+                if (verification.IsApproved)
+                {
+                    await customOrders.HandlePaymentCallbackAsync(paymentState.BogOrderId, paymentState.BogOrderKey);
+                    continue;
+                }
+
+                if (IsPendingBogStatus(verification.Status))
+                {
+                    _logger.LogInformation(
+                        "Skipping abandoned cancellation for custom order {OrderId}; BOG status is still {Status} (BOG: {BogOrderId})",
+                        id, verification.Status, paymentState.BogOrderId);
+                    continue;
+                }
+            }
+
             var claimed = await db.CustomOrders
                 .Where(o => o.Id == id && o.Status == CustomOrderStatus.AwaitingPayment)
                 .ExecuteUpdateAsync(
@@ -152,4 +221,12 @@ public class AbandonedOrderReaper : BackgroundService
             _logger.LogInformation("Abandoned custom order {OrderId} cancelled", id);
         }
     }
+
+    private static bool IsPendingBogStatus(string status) =>
+        status.Equals("created", StringComparison.OrdinalIgnoreCase)
+        || status.Equals("processing", StringComparison.OrdinalIgnoreCase)
+        || status.Equals("auth_requested", StringComparison.OrdinalIgnoreCase)
+        || status.Equals("blocked", StringComparison.OrdinalIgnoreCase)
+        || status.Equals("error", StringComparison.OrdinalIgnoreCase)
+        || status.Equals("exception", StringComparison.OrdinalIgnoreCase);
 }

@@ -74,6 +74,8 @@ public class BogIPayService : IPaymentService
 
             using var req = new HttpRequestMessage(HttpMethod.Post, _ordersUrl);
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            if (TryBuildBogIdempotencyKey(orderKey, out var bogIdempotencyKey))
+                req.Headers.TryAddWithoutValidation("Idempotency-Key", bogIdempotencyKey);
             req.Content = JsonContent.Create(body);
 
             var res = await _http.SendAsync(req);
@@ -151,5 +153,21 @@ public class BogIPayService : IPaymentService
             _logger.LogError(ex, "Unexpected error verifying BOG payment {BogOrderId}", bogOrderId);
             return new PaymentVerificationResult(false, bogOrderId, null, "exception");
         }
+    }
+
+    private static bool TryBuildBogIdempotencyKey(string orderKey, out string idempotencyKey)
+    {
+        var normalized = orderKey.StartsWith("c-", StringComparison.Ordinal)
+            ? orderKey[2..]
+            : orderKey;
+
+        if (Guid.TryParseExact(normalized, "N", out var guid))
+        {
+            idempotencyKey = guid.ToString();
+            return true;
+        }
+
+        idempotencyKey = string.Empty;
+        return false;
     }
 }

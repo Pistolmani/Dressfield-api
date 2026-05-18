@@ -16,6 +16,7 @@ public class OrderService : IOrderService
     private readonly IPaymentService _payment;
     private readonly ILogger<OrderService> _logger;
     private readonly decimal _shippingCost;
+    private readonly string _paymentPageBaseUrl;
 
     public OrderService(DressfieldDbContext db, IPaymentService payment, IConfiguration configuration, ILogger<OrderService> logger)
     {
@@ -23,6 +24,7 @@ public class OrderService : IOrderService
         _payment = payment;
         _logger = logger;
         _shippingCost = decimal.TryParse(configuration["Orders:ShippingCost"], out var sc) ? sc : 5m;
+        _paymentPageBaseUrl = configuration["BogIPay:PaymentPageBaseUrl"] ?? "https://payment.bog.ge/";
     }
 
     public async Task<IReadOnlyCollection<OrderSummaryDto>> GetAdminAsync(OrderStatus? status)
@@ -136,11 +138,17 @@ public class OrderService : IOrderService
             var existing = await _db.Orders
                 .AsNoTracking()
                 .Where(o => o.UserId == userId && o.IdempotencyKey == normalizedIdempotencyKey)
-                .Select(o => new { o.Id, o.Status })
+                .Select(o => new { o.Id, o.Status, o.BogOrderId })
                 .FirstOrDefaultAsync();
 
             if (existing is not null)
-                return new CheckoutResponse(existing.Id, null, existing.Status != OrderStatus.Cancelled);
+            {
+                var redirectUrl = existing.Status == OrderStatus.AwaitingPayment && !string.IsNullOrWhiteSpace(existing.BogOrderId)
+                    ? BuildBogRedirectUrl(existing.BogOrderId)
+                    : null;
+
+                return new CheckoutResponse(existing.Id, redirectUrl, existing.Status != OrderStatus.Cancelled && redirectUrl is not null);
+            }
         }
 
         var productIds = request.Items.Select(i => i.ProductId).Distinct().ToList();
@@ -335,12 +343,30 @@ public class OrderService : IOrderService
             _db.OrderStatusLogs.Add(new OrderStatusLog
             {
                 OrderId = order.Id,
-                FromStatus = OrderStatus.AwaitingPayment,
+                FromStatus = OrderStatus.PaymentProcessing,
                 ToStatus = OrderStatus.Cancelled,
                 Notes = $"Amount mismatch: expected ₾{order.TotalAmount:F2}, BOG reported ₾{result.VerifiedAmount.Value:F2}",
             });
 
             await RestoreStockAndPromoAsync(order);
+            await _db.SaveChangesAsync();
+            return;
+        }
+
+        if (IsPendingBogStatus(result.Status))
+        {
+            order.Status = OrderStatus.AwaitingPayment;
+            order.UpdatedAt = DateTime.UtcNow;
+
+            _db.OrderStatusLogs.Add(new OrderStatusLog
+            {
+                OrderId = order.Id,
+                FromStatus = OrderStatus.PaymentProcessing,
+                ToStatus = OrderStatus.AwaitingPayment,
+                ChangedByUserId = null,
+                Notes = $"BOG callback not terminal yet: {result.Status}",
+            });
+
             await _db.SaveChangesAsync();
             return;
         }
@@ -351,7 +377,7 @@ public class OrderService : IOrderService
         _db.OrderStatusLogs.Add(new OrderStatusLog
         {
             OrderId = order.Id,
-            FromStatus = OrderStatus.AwaitingPayment,
+            FromStatus = OrderStatus.PaymentProcessing,
             ToStatus = order.Status,
             ChangedByUserId = null,
             Notes = $"BOG callback: {(result.IsApproved ? "approved" : "declined")} (txn: {result.TransactionId})",
@@ -534,6 +560,28 @@ public class OrderService : IOrderService
 
     private static decimal RoundMoney(decimal value) =>
         decimal.Round(value, 2, MidpointRounding.AwayFromZero);
+
+    private string BuildBogRedirectUrl(string bogOrderId)
+    {
+        var trimmedBaseUrl = _paymentPageBaseUrl.Trim();
+        var escapedOrderId = Uri.EscapeDataString(bogOrderId);
+
+        if (trimmedBaseUrl.Contains('?', StringComparison.Ordinal))
+        {
+            var separator = trimmedBaseUrl.EndsWith('?') || trimmedBaseUrl.EndsWith('&') ? "" : "&";
+            return $"{trimmedBaseUrl}{separator}order_id={escapedOrderId}";
+        }
+
+        return $"{trimmedBaseUrl.TrimEnd('/')}/?order_id={escapedOrderId}";
+    }
+
+    private static bool IsPendingBogStatus(string status) =>
+        status.Equals("created", StringComparison.OrdinalIgnoreCase)
+        || status.Equals("processing", StringComparison.OrdinalIgnoreCase)
+        || status.Equals("auth_requested", StringComparison.OrdinalIgnoreCase)
+        || status.Equals("blocked", StringComparison.OrdinalIgnoreCase)
+        || status.Equals("error", StringComparison.OrdinalIgnoreCase)
+        || status.Equals("exception", StringComparison.OrdinalIgnoreCase);
 
     private static decimal CalculateDiscountedProductPrice(decimal basePrice, decimal salePercentage)
     {

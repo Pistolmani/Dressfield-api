@@ -81,9 +81,8 @@ public class PaymentsController : ControllerBase
             if (ageSeconds > _callbackMaxAgeSeconds)
             {
                 _logger.LogWarning(
-                    "BOG callback rejected as replay (age: {Age:F0}s, max: {Max}s)",
+                    "BOG callback is older than replay window but will be processed after signature verification (age: {Age:F0}s, max: {Max}s)",
                     ageSeconds, _callbackMaxAgeSeconds);
-                return Ok();
             }
         }
 

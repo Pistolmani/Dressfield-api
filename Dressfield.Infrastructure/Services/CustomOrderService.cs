@@ -218,9 +218,26 @@ public class CustomOrderService : ICustomOrderService
             _db.CustomOrderStatusLogs.Add(new CustomOrderStatusLog
             {
                 CustomOrderId = order.Id,
-                FromStatus = CustomOrderStatus.AwaitingPayment,
+                FromStatus = CustomOrderStatus.PaymentProcessing,
                 ToStatus = CustomOrderStatus.Cancelled,
                 Notes = $"Amount mismatch: expected ₾{order.TotalPrice:F2}, BOG reported ₾{result.VerifiedAmount.Value:F2}",
+            });
+
+            await _db.SaveChangesAsync();
+            return;
+        }
+
+        if (IsPendingBogStatus(result.Status))
+        {
+            order.Status = CustomOrderStatus.AwaitingPayment;
+            order.UpdatedAt = DateTime.UtcNow;
+
+            _db.CustomOrderStatusLogs.Add(new CustomOrderStatusLog
+            {
+                CustomOrderId = order.Id,
+                FromStatus = CustomOrderStatus.PaymentProcessing,
+                ToStatus = CustomOrderStatus.AwaitingPayment,
+                Notes = $"BOG callback not terminal yet: {result.Status}",
             });
 
             await _db.SaveChangesAsync();
@@ -233,7 +250,7 @@ public class CustomOrderService : ICustomOrderService
         _db.CustomOrderStatusLogs.Add(new CustomOrderStatusLog
         {
             CustomOrderId = order.Id,
-            FromStatus = CustomOrderStatus.AwaitingPayment,
+            FromStatus = CustomOrderStatus.PaymentProcessing,
             ToStatus = order.Status,
             Notes = $"BOG callback: {(result.IsApproved ? "approved" : "declined")} (txn: {result.TransactionId})",
         });
@@ -303,4 +320,12 @@ public class CustomOrderService : ICustomOrderService
             ? extraPrice
             : 0m;
     }
+
+    private static bool IsPendingBogStatus(string status) =>
+        status.Equals("created", StringComparison.OrdinalIgnoreCase)
+        || status.Equals("processing", StringComparison.OrdinalIgnoreCase)
+        || status.Equals("auth_requested", StringComparison.OrdinalIgnoreCase)
+        || status.Equals("blocked", StringComparison.OrdinalIgnoreCase)
+        || status.Equals("error", StringComparison.OrdinalIgnoreCase)
+        || status.Equals("exception", StringComparison.OrdinalIgnoreCase);
 }
