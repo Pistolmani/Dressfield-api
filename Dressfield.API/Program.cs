@@ -39,16 +39,16 @@ Log.Logger = new LoggerConfiguration()
 
 builder.Host.UseSerilog();
 
-// â”€â”€ Resolve real client IP from Azure / reverse proxy (required for rate limiting) â”€â”€
+// â"€â"€ Resolve real client IP from Azure / reverse proxy (required for rate limiting) â"€â"€
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    // Trust all known proxies â€” Azure App Service manages this internally
+    // Trust all known proxies -- Azure App Service manages this internally
     options.KnownNetworks.Clear();
     options.KnownProxies.Clear();
 });
 
-// â”€â”€ Request body size (20 MB â€” covers design image uploads) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// â"€â"€ Request body size (20 MB -- covers design image uploads) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MaxRequestBodySize = 20 * 1024 * 1024);
 
@@ -121,7 +121,7 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddRateLimiter(options =>
 {
-    // Auth endpoints â€” 10 requests per minute per IP (prevents brute-force)
+    // Auth endpoints -- 10 requests per minute per IP (prevents brute-force)
     options.AddFixedWindowLimiter("auth", o =>
     {
         o.Window              = TimeSpan.FromMinutes(1);
@@ -130,7 +130,7 @@ builder.Services.AddRateLimiter(options =>
         o.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
     });
 
-    // Order creation â€” 20 requests per minute per IP (prevents order flooding)
+    // Order creation -- 20 requests per minute per IP (prevents order flooding)
     options.AddFixedWindowLimiter("orders", o =>
     {
         o.Window      = TimeSpan.FromMinutes(1);
@@ -177,8 +177,9 @@ builder.Services.AddScoped<IPromoCodeService, PromoCodeService>();
 builder.Services.AddScoped<IAdminDashboardService, AdminDashboardService>();
 builder.Services.AddScoped<IAuditLogService, AuditLogService>();
 builder.Services.AddHostedService<EmailOutboxWorker>();
+builder.Services.AddHostedService<AbandonedOrderReaper>();
 
-// Storage service â€” Azure Blob in production, local filesystem only in development
+// Storage service -- Azure Blob in production, local filesystem only in development
 var azureConnectionString = builder.Configuration["AzureStorage:ConnectionString"];
 if (string.IsNullOrWhiteSpace(azureConnectionString))
 {
@@ -220,28 +221,42 @@ else
     }
 }
 
-// Payment service â€” real BOG iPay in prod, mock in dev
+// Payment service — real BOG iPay in prod, mock in dev
 var bogClientId = builder.Configuration["BogIPay:ClientId"];
 if (string.IsNullOrWhiteSpace(bogClientId))
 {
+    if (!builder.Environment.IsDevelopment())
+        throw new InvalidOperationException(
+            "BogIPay:ClientId is not configured. " +
+            "Real BOG credentials are required outside Development. " +
+            "Set them via Azure environment variables BogIPay__ClientId and BogIPay__ClientSecret.");
+
     builder.Services.AddScoped<IPaymentService, MockPaymentService>();
+    Log.Warning("BogIPay credentials are not configured. Using MockPaymentService (development only).");
 }
 else
 {
+    static IAsyncPolicy<HttpResponseMessage> RetryPolicy() =>
+        HttpPolicyExtensions.HandleTransientHttpError()
+            .WaitAndRetryAsync(3, attempt => TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt)));
+
     builder.Services.AddSingleton<IBogTokenProvider, BogTokenProvider>();
     builder.Services.AddHttpClient(nameof(BogTokenProvider), c =>
     {
         c.Timeout = TimeSpan.FromSeconds(10);
     })
-    .AddTransientHttpErrorPolicy(p => p.WaitAndRetryAsync(
-        3, attempt => TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt))));
+    .AddPolicyHandler(RetryPolicy());
 
     builder.Services.AddHttpClient<BogIPayService>(c =>
     {
         c.Timeout = TimeSpan.FromSeconds(15);
     })
-    .AddTransientHttpErrorPolicy(p => p.WaitAndRetryAsync(
-        3, attempt => TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt))));
+    // Retry only idempotent GET calls — never retry POST (create-order) to avoid duplicate sessions
+    .AddPolicyHandler(request =>
+        request.Method == HttpMethod.Get
+            ? RetryPolicy()
+            : Policy.NoOpAsync<HttpResponseMessage>());
+
     builder.Services.AddScoped<IPaymentService, BogIPayService>();
 }
 
@@ -259,7 +274,7 @@ builder.Services.AddSwaggerGen();
 
 var app = builder.Build();
 
-// Must be first â€” resolve real client IP from Azure load balancer
+// Must be first -- resolve real client IP from Azure load balancer
 app.UseForwardedHeaders();
 app.UseExceptionHandler();
 
@@ -366,13 +381,13 @@ try
     {
         if (app.Environment.IsDevelopment())
         {
-            // Acceptable dev default â€” never reaches production
+            // Acceptable dev default -- never reaches production
             adminPassword = "Admin123!@#";
-            Log.Warning("Admin:Password not configured â€” using dev default. Never deploy this to production.");
+            Log.Warning("Admin:Password not configured -- using dev default. Never deploy this to production.");
         }
         else
         {
-            // Hard fail in production â€” no fallback password ever
+            // Hard fail in production -- no fallback password ever
             throw new InvalidOperationException(
                 "Admin:Password must be set in production via Azure environment variable Admin__Password.");
         }

@@ -34,6 +34,9 @@ public class Order
     public string? BogOrderId { get; set; }      // ID returned by BOG when creating a payment session
     public string? BogOrderKey { get; set; }     // Unique key we generate and send to BOG
 
+    // Nullable — only set for authenticated users; guards against double-submit on network retry
+    public string? IdempotencyKey { get; set; }
+
     public string? CustomerNotes { get; set; }
     public string? AdminNotes { get; set; }
 

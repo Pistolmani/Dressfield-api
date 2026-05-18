@@ -40,10 +40,11 @@ public class OrdersController : ControllerBase
             return BadRequest(validation.Errors.Select(e => e.ErrorMessage));
 
         var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);   // null for guests
+        var idempotencyKey = Request.Headers["Idempotency-Key"].FirstOrDefault();
 
         try
         {
-            var result = await _orders.CreateAsync(request, userId);
+            var result = await _orders.CreateAsync(request, userId, idempotencyKey);
             return Ok(result);
         }
         catch (InvalidOperationException ex)

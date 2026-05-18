@@ -127,8 +127,22 @@ public class OrderService : IOrderService
             .FirstOrDefaultAsync();
     }
 
-    public async Task<CheckoutResponse> CreateAsync(CreateOrderRequest request, string? userId)
+    public async Task<CheckoutResponse> CreateAsync(CreateOrderRequest request, string? userId, string? idempotencyKey = null)
     {
+        var normalizedIdempotencyKey = string.IsNullOrWhiteSpace(idempotencyKey) ? null : idempotencyKey.Trim();
+
+        if (normalizedIdempotencyKey is not null && !string.IsNullOrEmpty(userId))
+        {
+            var existing = await _db.Orders
+                .AsNoTracking()
+                .Where(o => o.UserId == userId && o.IdempotencyKey == normalizedIdempotencyKey)
+                .Select(o => new { o.Id, o.Status })
+                .FirstOrDefaultAsync();
+
+            if (existing is not null)
+                return new CheckoutResponse(existing.Id, null, existing.Status != OrderStatus.Cancelled);
+        }
+
         var productIds = request.Items.Select(i => i.ProductId).Distinct().ToList();
         var products = await _db.Products
             .Include(p => p.Variants)
@@ -217,6 +231,7 @@ public class OrderService : IOrderService
         var order = new Order
         {
             UserId = userId,
+            IdempotencyKey = !string.IsNullOrEmpty(userId) ? normalizedIdempotencyKey : null,
             ContactName = request.ContactName.Trim(),
             ContactPhone = request.ContactPhone.Trim(),
             ContactEmail = request.ContactEmail.Trim().ToLowerInvariant(),
@@ -289,17 +304,10 @@ public class OrderService : IOrderService
 
     public async Task HandlePaymentCallbackAsync(string bogOrderId, string? orderKey)
     {
-        if (string.IsNullOrWhiteSpace(orderKey))
-        {
-            _logger.LogWarning("Payment callback missing key for BOG order {BogOrderId}", bogOrderId);
-            return;
-        }
-
-        // Atomic claim: only one concurrent caller transitions AwaitingPayment → PaymentProcessing
+        // Atomic claim: only one concurrent caller transitions AwaitingPayment → PaymentProcessing.
+        // RSA signature on the controller already authenticates the caller; orderKey is not re-checked here.
         var claimed = await _db.Orders
-            .Where(o => o.BogOrderId == bogOrderId
-                     && o.BogOrderKey == orderKey
-                     && o.Status == OrderStatus.AwaitingPayment)
+            .Where(o => o.BogOrderId == bogOrderId && o.Status == OrderStatus.AwaitingPayment)
             .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, OrderStatus.PaymentProcessing)
                                       .SetProperty(o => o.UpdatedAt, DateTime.UtcNow));
 
@@ -314,6 +322,28 @@ public class OrderService : IOrderService
             .FirstAsync(o => o.BogOrderId == bogOrderId);
 
         var result = await _payment.VerifyCallbackAsync(bogOrderId);
+
+        if (result.VerifiedAmount.HasValue && Math.Abs(result.VerifiedAmount.Value - order.TotalAmount) > 0.01m)
+        {
+            _logger.LogCritical(
+                "BOG amount mismatch for order {OrderId}: expected {Expected:F2}, got {Got:F2} (BOG: {BogOrderId})",
+                order.Id, order.TotalAmount, result.VerifiedAmount.Value, bogOrderId);
+
+            order.Status = OrderStatus.Cancelled;
+            order.UpdatedAt = DateTime.UtcNow;
+
+            _db.OrderStatusLogs.Add(new OrderStatusLog
+            {
+                OrderId = order.Id,
+                FromStatus = OrderStatus.AwaitingPayment,
+                ToStatus = OrderStatus.Cancelled,
+                Notes = $"Amount mismatch: expected ₾{order.TotalAmount:F2}, BOG reported ₾{result.VerifiedAmount.Value:F2}",
+            });
+
+            await RestoreStockAndPromoAsync(order);
+            await _db.SaveChangesAsync();
+            return;
+        }
 
         order.Status    = result.IsApproved ? OrderStatus.Paid : OrderStatus.Cancelled;
         order.UpdatedAt = DateTime.UtcNow;
@@ -360,13 +390,14 @@ public class OrderService : IOrderService
         order.Status = OrderStatus.Cancelled;
         order.UpdatedAt = DateTime.UtcNow;
 
+        var notes = $"BOG session creation failed: {error}";
         _db.OrderStatusLogs.Add(new OrderStatusLog
         {
             OrderId = order.Id,
             FromStatus = previous,
             ToStatus = OrderStatus.Cancelled,
             ChangedByUserId = null,
-            Notes = $"BOG session creation failed: {error}".Substring(0, Math.Min(1000, $"BOG session creation failed: {error}".Length)),
+            Notes = notes.Length > 1000 ? notes[..1000] : notes,
         });
 
         foreach (var (variantId, qty, _) in stockReservations)

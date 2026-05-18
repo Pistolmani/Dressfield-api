@@ -111,11 +111,14 @@ public class DressfieldDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.TotalAmount).HasPrecision(18, 2);
             entity.Property(e => e.BogOrderId).HasMaxLength(100);
             entity.Property(e => e.BogOrderKey).HasMaxLength(64);
+            entity.Property(e => e.IdempotencyKey).HasMaxLength(64);
             entity.Property(e => e.CustomerNotes).HasMaxLength(1000);
             entity.Property(e => e.AdminNotes).HasMaxLength(1000);
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.UserId);
             entity.HasIndex(e => e.BogOrderId).IsUnique();
+            // Unique per (UserId, IdempotencyKey); MySQL allows multiple NULLs in unique indexes
+            entity.HasIndex(e => new { e.UserId, e.IdempotencyKey }).IsUnique();
             entity.HasOne(e => e.User).WithMany().HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.SetNull).IsRequired(false);
         });
 

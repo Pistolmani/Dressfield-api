@@ -189,16 +189,10 @@ public class CustomOrderService : ICustomOrderService
 
     public async Task HandlePaymentCallbackAsync(string bogOrderId, string? orderKey)
     {
-        if (string.IsNullOrWhiteSpace(orderKey))
-        {
-            _logger.LogWarning("Payment callback missing key for BOG custom order {BogOrderId}", bogOrderId);
-            return;
-        }
-
+        // Atomic claim: only one concurrent caller transitions AwaitingPayment → PaymentProcessing.
+        // RSA signature on the controller already authenticates the caller; orderKey is not re-checked here.
         var claimed = await _db.CustomOrders
-            .Where(o => o.BogOrderId == bogOrderId
-                     && o.BogOrderKey == orderKey
-                     && o.Status == CustomOrderStatus.AwaitingPayment)
+            .Where(o => o.BogOrderId == bogOrderId && o.Status == CustomOrderStatus.AwaitingPayment)
             .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, CustomOrderStatus.PaymentProcessing)
                                       .SetProperty(o => o.UpdatedAt, DateTime.UtcNow));
 
@@ -211,6 +205,27 @@ public class CustomOrderService : ICustomOrderService
         var order = await _db.CustomOrders.FirstAsync(o => o.BogOrderId == bogOrderId);
 
         var result = await _payment.VerifyCallbackAsync(bogOrderId);
+
+        if (result.VerifiedAmount.HasValue && Math.Abs(result.VerifiedAmount.Value - order.TotalPrice) > 0.01m)
+        {
+            _logger.LogCritical(
+                "BOG amount mismatch for custom order {OrderId}: expected {Expected:F2}, got {Got:F2} (BOG: {BogOrderId})",
+                order.Id, order.TotalPrice, result.VerifiedAmount.Value, bogOrderId);
+
+            order.Status = CustomOrderStatus.Cancelled;
+            order.UpdatedAt = DateTime.UtcNow;
+
+            _db.CustomOrderStatusLogs.Add(new CustomOrderStatusLog
+            {
+                CustomOrderId = order.Id,
+                FromStatus = CustomOrderStatus.AwaitingPayment,
+                ToStatus = CustomOrderStatus.Cancelled,
+                Notes = $"Amount mismatch: expected ₾{order.TotalPrice:F2}, BOG reported ₾{result.VerifiedAmount.Value:F2}",
+            });
+
+            await _db.SaveChangesAsync();
+            return;
+        }
 
         order.Status = result.IsApproved ? CustomOrderStatus.Reviewing : CustomOrderStatus.Cancelled;
         order.UpdatedAt = DateTime.UtcNow;

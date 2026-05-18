@@ -24,4 +24,5 @@ public record PaymentVerificationResult(
     bool IsApproved,
     string BogOrderId,
     string? TransactionId,
-    string Status);
+    string Status,
+    decimal? VerifiedAmount = null);

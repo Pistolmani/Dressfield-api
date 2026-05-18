@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -27,6 +28,7 @@ public class PaymentsController : ControllerBase
     private readonly ICustomOrderService _customOrders;
     private readonly ILogger<PaymentsController> _logger;
     private readonly string _callbackPublicKeyPem;
+    private readonly int _callbackMaxAgeSeconds;
 
     public PaymentsController(
         IOrderService orders,
@@ -38,6 +40,7 @@ public class PaymentsController : ControllerBase
         _customOrders = customOrders;
         _logger = logger;
         _callbackPublicKeyPem = configuration["BogIPay:CallbackPublicKeyPem"] ?? DefaultCallbackPublicKeyPem;
+        _callbackMaxAgeSeconds = configuration.GetValue("BogIPay:CallbackMaxAgeSeconds", 300);
     }
 
     /// <summary>
@@ -72,6 +75,18 @@ public class PaymentsController : ControllerBase
             return BadRequest();
         }
 
+        if (TryExtractCallbackTime(rawBody, out var callbackTime))
+        {
+            var ageSeconds = (DateTime.UtcNow - callbackTime).TotalSeconds;
+            if (ageSeconds > _callbackMaxAgeSeconds)
+            {
+                _logger.LogWarning(
+                    "BOG callback rejected as replay (age: {Age:F0}s, max: {Max}s)",
+                    ageSeconds, _callbackMaxAgeSeconds);
+                return Ok();
+            }
+        }
+
         if (!TryExtractBogOrderId(rawBody, out var orderId))
         {
             _logger.LogWarning("BOG callback received without body.order_id.");
@@ -91,7 +106,7 @@ public class PaymentsController : ControllerBase
         catch (Exception ex)
         {
             // Log but swallow — BOG must receive 200 or it retries
-            _logger.LogError(ex, "Error handling BOG callback for {BogOrderId}", orderId);
+            _logger.LogCritical(ex, "Unhandled error processing BOG callback for {BogOrderId}", orderId);
         }
 
         return Ok();
@@ -138,6 +153,28 @@ public class PaymentsController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to verify BOG callback signature.");
+            return false;
+        }
+    }
+
+    private static bool TryExtractCallbackTime(string rawBody, out DateTime callbackTime)
+    {
+        callbackTime = default;
+        try
+        {
+            using var doc = JsonDocument.Parse(rawBody);
+            if (doc.RootElement.TryGetProperty("zoned_request_time", out var timeEl))
+            {
+                var raw = timeEl.GetString();
+                if (DateTime.TryParse(raw, null,
+                        DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                        out callbackTime))
+                    return true;
+            }
+            return false;
+        }
+        catch (JsonException)
+        {
             return false;
         }
     }
