@@ -140,6 +140,7 @@ public class OrderService : IOrderService
             throw new InvalidOperationException("ერთ-ერთი პროდუქტი მიუწვდომელია.");
 
         var items = new List<OrderItem>();
+        var stockReservations = new List<(int VariantId, int Quantity, string ProductName)>();
         decimal subtotal = 0;
 
         foreach (var cartItem in request.Items)
@@ -149,6 +150,16 @@ public class OrderService : IOrderService
                 ? product.Variants.FirstOrDefault(v => v.Id == cartItem.VariantId.Value && v.IsActive)
                 : null;
 
+            if (cartItem.VariantId.HasValue)
+            {
+                if (variant is null)
+                    throw new InvalidOperationException($"არჩეული ვარიანტი მიუწვდომელია: {product.Name}");
+                if (variant.StockQuantity < cartItem.Quantity)
+                    throw new InvalidOperationException($"მარაგი არასაკმარისია: {product.Name}");
+
+                stockReservations.Add((variant.Id, cartItem.Quantity, product.Name));
+            }
+
             var discountedBasePrice = CalculateDiscountedProductPrice(product.BasePrice, product.SalePercentage);
             var unitPrice = discountedBasePrice + (variant?.PriceAdjustment ?? 0);
             var lineTotal = unitPrice * cartItem.Quantity;
@@ -157,6 +168,7 @@ public class OrderService : IOrderService
             items.Add(new OrderItem
             {
                 ProductId = product.Id,
+                VariantId = variant?.Id,
                 ProductName = product.Name,
                 ProductSlug = product.Slug,
                 ProductImageUrl = product.Images.OrderBy(i => i.SortOrder).FirstOrDefault()?.ImageUrl,
@@ -170,6 +182,7 @@ public class OrderService : IOrderService
         var normalizedPromoCode = NormalizePromoCode(request.PromoCode);
         decimal promoDiscountAmount = 0m;
         decimal? promoDiscountPercentage = null;
+        int? promoCodeId = null;
 
         if (!string.IsNullOrWhiteSpace(normalizedPromoCode))
         {
@@ -183,6 +196,17 @@ public class OrderService : IOrderService
             if (promoCode.ExpiresAtUtc.HasValue && promoCode.ExpiresAtUtc.Value <= DateTime.UtcNow)
                 throw new InvalidOperationException("პრომო კოდის ვადა გასულია.");
 
+            if (promoCode.MaxUsesPerUser.HasValue && !string.IsNullOrEmpty(userId))
+            {
+                var userUses = await _db.Orders
+                    .CountAsync(o => o.UserId == userId
+                                 && o.PromoCode == normalizedPromoCode
+                                 && o.Status != OrderStatus.Cancelled);
+                if (userUses >= promoCode.MaxUsesPerUser.Value)
+                    throw new InvalidOperationException("პრომო კოდის გამოყენების ლიმიტი ამოწურულია.");
+            }
+
+            promoCodeId = promoCode.Id;
             promoDiscountPercentage = NormalizePercent(promoCode.DiscountPercentage);
             promoDiscountAmount = RoundMoney(subtotal * promoDiscountPercentage.Value / 100m);
         }
@@ -212,8 +236,35 @@ public class OrderService : IOrderService
             Items = items
         };
 
+        await using var tx = await _db.Database.BeginTransactionAsync();
+
+        // Atomic stock decrement — guard prevents oversell under concurrent checkouts
+        foreach (var (variantId, qty, productName) in stockReservations)
+        {
+            var updated = await _db.ProductVariants
+                .Where(v => v.Id == variantId && v.StockQuantity >= qty)
+                .ExecuteUpdateAsync(s => s.SetProperty(v => v.StockQuantity, v => v.StockQuantity - qty));
+
+            if (updated == 0)
+                throw new InvalidOperationException($"მარაგი არასაკმარისია: {productName}");
+        }
+
+        // Atomic promo-code usage claim
+        if (promoCodeId.HasValue)
+        {
+            var claimed = await _db.PromoCodes
+                .Where(p => p.Id == promoCodeId.Value
+                         && p.IsActive
+                         && (p.MaxUses == null || p.UsedCount < p.MaxUses))
+                .ExecuteUpdateAsync(s => s.SetProperty(p => p.UsedCount, p => p.UsedCount + 1));
+
+            if (claimed == 0)
+                throw new InvalidOperationException("პრომო კოდის ლიმიტი ამოწურულია.");
+        }
+
         _db.Orders.Add(order);
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
 
         var description = $"DressField შეკვეთა #{order.Id}";
         var paymentResult = await _payment.CreateSessionAsync(order.Id, order.TotalAmount, orderKey, description);
@@ -224,6 +275,11 @@ public class OrderService : IOrderService
             order.Status = OrderStatus.AwaitingPayment;
             await _db.SaveChangesAsync();
         }
+        else
+        {
+            // Compensate: cancel the order, restore stock/promo, log the failure
+            await CancelAndRestoreAsync(order, stockReservations, promoCodeId, paymentResult.ErrorMessage);
+        }
 
         return new CheckoutResponse(
             order.Id,
@@ -233,43 +289,41 @@ public class OrderService : IOrderService
 
     public async Task HandlePaymentCallbackAsync(string bogOrderId, string? orderKey)
     {
+        if (string.IsNullOrWhiteSpace(orderKey))
+        {
+            _logger.LogWarning("Payment callback missing key for BOG order {BogOrderId}", bogOrderId);
+            return;
+        }
+
+        // Atomic claim: only one concurrent caller transitions AwaitingPayment → PaymentProcessing
+        var claimed = await _db.Orders
+            .Where(o => o.BogOrderId == bogOrderId
+                     && o.BogOrderKey == orderKey
+                     && o.Status == OrderStatus.AwaitingPayment)
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, OrderStatus.PaymentProcessing)
+                                      .SetProperty(o => o.UpdatedAt, DateTime.UtcNow));
+
+        if (claimed == 0)
+        {
+            _logger.LogInformation("Callback for {BogOrderId} not claimable (already handled or unknown)", bogOrderId);
+            return;
+        }
+
         var order = await _db.Orders
             .Include(o => o.Items)
-            .FirstOrDefaultAsync(o => o.BogOrderId == bogOrderId);
-
-        if (order == null)
-        {
-            _logger.LogWarning("Payment callback for unknown BOG order {BogOrderId}", bogOrderId);
-            return;
-        }
-
-        // Reject callbacks without the per-order secret, or with a mismatched secret.
-        if (string.IsNullOrWhiteSpace(orderKey) || order.BogOrderKey != orderKey)
-        {
-            _logger.LogWarning("Payment callback key validation failed for order {OrderId}", order.Id);
-            return;
-        }
-
-        // Idempotency guard — only process if still awaiting payment
-        if (order.Status != OrderStatus.AwaitingPayment)
-        {
-            _logger.LogInformation("Duplicate callback for order {OrderId} (status: {Status}) — skipping",
-                order.Id, order.Status);
-            return;
-        }
+            .FirstAsync(o => o.BogOrderId == bogOrderId);
 
         var result = await _payment.VerifyCallbackAsync(bogOrderId);
 
-        var previousStatus = order.Status;
         order.Status    = result.IsApproved ? OrderStatus.Paid : OrderStatus.Cancelled;
         order.UpdatedAt = DateTime.UtcNow;
 
         _db.OrderStatusLogs.Add(new OrderStatusLog
         {
             OrderId = order.Id,
-            FromStatus = previousStatus,
+            FromStatus = OrderStatus.AwaitingPayment,
             ToStatus = order.Status,
-            ChangedByUserId = null, // system event
+            ChangedByUserId = null,
             Notes = $"BOG callback: {(result.IsApproved ? "approved" : "declined")} (txn: {result.TransactionId})",
         });
 
@@ -285,11 +339,70 @@ public class OrderService : IOrderService
             }));
             QueueConfirmationEmail(order.ContactEmail, order.Id, itemsHtml, $"₾{order.TotalAmount:F2}");
         }
+        else if (!result.IsApproved)
+        {
+            await RestoreStockAndPromoAsync(order);
+        }
 
         await _db.SaveChangesAsync();
 
         _logger.LogInformation("Order {OrderId} payment {Result} (BOG: {BogOrderId})",
             order.Id, result.IsApproved ? "approved" : "declined", bogOrderId);
+    }
+
+    private async Task CancelAndRestoreAsync(
+        Order order,
+        List<(int VariantId, int Quantity, string ProductName)> stockReservations,
+        int? promoCodeId,
+        string? error)
+    {
+        var previous = order.Status;
+        order.Status = OrderStatus.Cancelled;
+        order.UpdatedAt = DateTime.UtcNow;
+
+        _db.OrderStatusLogs.Add(new OrderStatusLog
+        {
+            OrderId = order.Id,
+            FromStatus = previous,
+            ToStatus = OrderStatus.Cancelled,
+            ChangedByUserId = null,
+            Notes = $"BOG session creation failed: {error}".Substring(0, Math.Min(1000, $"BOG session creation failed: {error}".Length)),
+        });
+
+        foreach (var (variantId, qty, _) in stockReservations)
+        {
+            await _db.ProductVariants
+                .Where(v => v.Id == variantId)
+                .ExecuteUpdateAsync(s => s.SetProperty(v => v.StockQuantity, v => v.StockQuantity + qty));
+        }
+
+        if (promoCodeId.HasValue)
+        {
+            await _db.PromoCodes
+                .Where(p => p.Id == promoCodeId.Value && p.UsedCount > 0)
+                .ExecuteUpdateAsync(s => s.SetProperty(p => p.UsedCount, p => p.UsedCount - 1));
+        }
+
+        await _db.SaveChangesAsync();
+    }
+
+    private async Task RestoreStockAndPromoAsync(Order order)
+    {
+        foreach (var item in order.Items.Where(i => i.VariantId.HasValue))
+        {
+            var variantId = item.VariantId!.Value;
+            var qty = item.Quantity;
+            await _db.ProductVariants
+                .Where(v => v.Id == variantId)
+                .ExecuteUpdateAsync(s => s.SetProperty(v => v.StockQuantity, v => v.StockQuantity + qty));
+        }
+
+        if (!string.IsNullOrEmpty(order.PromoCode))
+        {
+            await _db.PromoCodes
+                .Where(p => p.Code == order.PromoCode && p.UsedCount > 0)
+                .ExecuteUpdateAsync(s => s.SetProperty(p => p.UsedCount, p => p.UsedCount - 1));
+        }
     }
 
     private static OrderDetailDto MapDetail(Order order) =>

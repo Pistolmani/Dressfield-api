@@ -2,7 +2,6 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Dressfield.Core.Interfaces;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -15,25 +14,29 @@ namespace Dressfield.Infrastructure.Services;
 /// </summary>
 public class BogIPayService : IPaymentService
 {
+    private const string Currency = "GEL";
+
     private readonly HttpClient _http;
     private readonly ILogger<BogIPayService> _logger;
-    private readonly string _clientId;
-    private readonly string _clientSecret;
+    private readonly IBogTokenProvider _tokenProvider;
     private readonly string _apiBaseUrl;      // Backend URL — where BOG sends the webhook
     private readonly string _frontendBaseUrl; // Frontend URL — where the customer is redirected
-    private readonly string _tokenUrl;
     private readonly string _ordersUrl;
+    private readonly string _receiptUrl;
 
-    public BogIPayService(HttpClient http, IConfiguration config, ILogger<BogIPayService> logger)
+    public BogIPayService(
+        HttpClient http,
+        IConfiguration config,
+        IBogTokenProvider tokenProvider,
+        ILogger<BogIPayService> logger)
     {
         _http = http;
         _logger = logger;
-        _clientId      = config["BogIPay:ClientId"]      ?? throw new InvalidOperationException("BogIPay:ClientId is not configured.");
-        _clientSecret  = config["BogIPay:ClientSecret"]  ?? throw new InvalidOperationException("BogIPay:ClientSecret is not configured.");
+        _tokenProvider = tokenProvider;
         _apiBaseUrl    = config["BogIPay:ApiBaseUrl"]    ?? throw new InvalidOperationException("BogIPay:ApiBaseUrl is not configured.");
         _frontendBaseUrl = config["BogIPay:FrontendBaseUrl"] ?? throw new InvalidOperationException("BogIPay:FrontendBaseUrl is not configured.");
-        _tokenUrl  = config["BogIPay:TokenUrl"]  ?? "https://oauth2.bog.ge/auth/realms/bog/protocol/openid-connect/token";
-        _ordersUrl = config["BogIPay:OrdersUrl"] ?? "https://api.bog.ge/payments/v1/ecommerce/orders";
+        _ordersUrl  = config["BogIPay:OrdersUrl"]  ?? "https://api.bog.ge/payments/v1/ecommerce/orders";
+        _receiptUrl = config["BogIPay:ReceiptUrl"] ?? "https://api.bog.ge/payments/v1/receipt";
     }
 
     public async Task<PaymentSessionResult> CreateSessionAsync(
@@ -41,7 +44,7 @@ public class BogIPayService : IPaymentService
     {
         try
         {
-            var token = await GetAccessTokenAsync();
+            var token = await _tokenProvider.GetAccessTokenAsync();
 
             var body = new
             {
@@ -54,14 +57,16 @@ public class BogIPayService : IPaymentService
                 },
                 purchase_units = new
                 {
-                    total_amount = amount,
+                    currency = Currency,
+                    total_amount = decimal.Round(amount, 2, MidpointRounding.AwayFromZero),
                     basket = new[]
                     {
                         new
                         {
                             quantity   = 1,
-                            unit_price = amount,
-                            product_id = $"ORDER-{orderId}"
+                            unit_price = decimal.Round(amount, 2, MidpointRounding.AwayFromZero),
+                            product_id = $"ORDER-{orderId}",
+                            description = description
                         }
                     }
                 }
@@ -83,8 +88,6 @@ public class BogIPayService : IPaymentService
             using var doc = JsonDocument.Parse(raw);
             var root = doc.RootElement;
 
-            _logger.LogInformation("BOG create-order response: {Body}", raw);
-
             var bogOrderId  = root.GetProperty("id").GetString();
             var redirectUrl = root
                 .GetProperty("_links")
@@ -92,7 +95,7 @@ public class BogIPayService : IPaymentService
                 .GetProperty("href")
                 .GetString();
 
-            _logger.LogInformation("BOG redirect URL: {Url}", redirectUrl);
+            _logger.LogInformation("BOG order created for order {OrderId} (BOG: {BogOrderId})", orderId, bogOrderId);
 
             return new PaymentSessionResult(true, redirectUrl, bogOrderId, null);
         }
@@ -107,9 +110,9 @@ public class BogIPayService : IPaymentService
     {
         try
         {
-            var token = await GetAccessTokenAsync();
+            var token = await _tokenProvider.GetAccessTokenAsync();
 
-            using var req = new HttpRequestMessage(HttpMethod.Get, $"{_ordersUrl}/{bogOrderId}");
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"{_receiptUrl.TrimEnd('/')}/{bogOrderId}");
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
             var res = await _http.SendAsync(req);
@@ -117,46 +120,30 @@ public class BogIPayService : IPaymentService
 
             if (!res.IsSuccessStatusCode)
             {
-                _logger.LogWarning("BOG verify-order failed {Status}: {Body}", res.StatusCode, raw);
+                _logger.LogWarning("BOG verify-order failed {Status} for {BogOrderId}", res.StatusCode, bogOrderId);
                 return new PaymentVerificationResult(false, bogOrderId, null, "error");
             }
 
             using var doc = JsonDocument.Parse(raw);
-            var root   = doc.RootElement;
-            var status = root.GetProperty("status").GetString() ?? "unknown";
-            var txnId  = root.TryGetProperty("payment_detail", out var detail)
-                ? detail.TryGetProperty("transaction_id", out var t) ? t.GetString() : null
+            var root = doc.RootElement;
+
+            var statusKey = root.TryGetProperty("order_status", out var orderStatus)
+                            && orderStatus.TryGetProperty("key", out var keyEl)
+                ? keyEl.GetString() ?? "unknown"
+                : "unknown";
+
+            var txnId = root.TryGetProperty("payment_detail", out var detail)
+                        && detail.TryGetProperty("transaction_id", out var t)
+                ? t.GetString()
                 : null;
 
-            var approved = string.Equals(status, "completed", StringComparison.OrdinalIgnoreCase);
-            return new PaymentVerificationResult(approved, bogOrderId, txnId, status);
+            var approved = string.Equals(statusKey, "completed", StringComparison.OrdinalIgnoreCase);
+            return new PaymentVerificationResult(approved, bogOrderId, txnId, statusKey);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error verifying BOG payment {BogOrderId}", bogOrderId);
             return new PaymentVerificationResult(false, bogOrderId, null, "exception");
         }
-    }
-
-    private async Task<string> GetAccessTokenAsync()
-    {
-        var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{_clientId}:{_clientSecret}"));
-
-        using var req = new HttpRequestMessage(HttpMethod.Post, _tokenUrl);
-        req.Headers.Authorization = new AuthenticationHeaderValue("Basic", credentials);
-        req.Content = new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["grant_type"] = "client_credentials"
-        });
-
-        var res = await _http.SendAsync(req);
-        var raw = await res.Content.ReadAsStringAsync();
-
-        if (!res.IsSuccessStatusCode)
-            throw new InvalidOperationException($"BOG token request failed ({res.StatusCode}): {raw}");
-
-        using var doc = JsonDocument.Parse(raw);
-        return doc.RootElement.GetProperty("access_token").GetString()
-            ?? throw new InvalidOperationException("BOG token response missing access_token.");
     }
 }

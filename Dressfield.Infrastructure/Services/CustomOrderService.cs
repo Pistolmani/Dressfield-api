@@ -63,9 +63,18 @@ public class CustomOrderService : ICustomOrderService
         var order = await _db.CustomOrders.FindAsync(id)
             ?? throw new KeyNotFoundException("შეკვეთა ვერ მოიძებნა");
 
+        var previousStatus = order.Status;
         order.Status = request.Status;
         order.AdminNotes = request.AdminNotes?.Trim();
         order.UpdatedAt = DateTime.UtcNow;
+
+        _db.CustomOrderStatusLogs.Add(new CustomOrderStatusLog
+        {
+            CustomOrderId = order.Id,
+            FromStatus = previousStatus,
+            ToStatus = request.Status,
+            Notes = request.AdminNotes?.Trim(),
+        });
 
         await _db.SaveChangesAsync();
     }
@@ -148,6 +157,30 @@ public class CustomOrderService : ICustomOrderService
         if (paymentResult.Success && paymentResult.BogOrderId != null)
         {
             order.BogOrderId = paymentResult.BogOrderId;
+            order.Status = CustomOrderStatus.AwaitingPayment;
+            order.UpdatedAt = DateTime.UtcNow;
+
+            _db.CustomOrderStatusLogs.Add(new CustomOrderStatusLog
+            {
+                CustomOrderId = order.Id,
+                FromStatus = CustomOrderStatus.Pending,
+                ToStatus = CustomOrderStatus.AwaitingPayment,
+                Notes = "BOG payment session created",
+            });
+            await _db.SaveChangesAsync();
+        }
+        else
+        {
+            order.Status = CustomOrderStatus.Cancelled;
+            order.UpdatedAt = DateTime.UtcNow;
+
+            _db.CustomOrderStatusLogs.Add(new CustomOrderStatusLog
+            {
+                CustomOrderId = order.Id,
+                FromStatus = CustomOrderStatus.Pending,
+                ToStatus = CustomOrderStatus.Cancelled,
+                Notes = $"BOG session creation failed: {paymentResult.ErrorMessage}",
+            });
             await _db.SaveChangesAsync();
         }
 
@@ -156,33 +189,39 @@ public class CustomOrderService : ICustomOrderService
 
     public async Task HandlePaymentCallbackAsync(string bogOrderId, string? orderKey)
     {
-        var order = await _db.CustomOrders
-            .FirstOrDefaultAsync(o => o.BogOrderId == bogOrderId);
-
-        if (order == null)
+        if (string.IsNullOrWhiteSpace(orderKey))
         {
-            _logger.LogWarning("Payment callback for unknown BOG custom order {BogOrderId}", bogOrderId);
+            _logger.LogWarning("Payment callback missing key for BOG custom order {BogOrderId}", bogOrderId);
             return;
         }
 
-        if (string.IsNullOrWhiteSpace(orderKey) || order.BogOrderKey != orderKey)
+        var claimed = await _db.CustomOrders
+            .Where(o => o.BogOrderId == bogOrderId
+                     && o.BogOrderKey == orderKey
+                     && o.Status == CustomOrderStatus.AwaitingPayment)
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, CustomOrderStatus.PaymentProcessing)
+                                      .SetProperty(o => o.UpdatedAt, DateTime.UtcNow));
+
+        if (claimed == 0)
         {
-            _logger.LogWarning("Payment callback key validation failed for custom order {OrderId}", order.Id);
+            _logger.LogInformation("Callback for {BogOrderId} not claimable (already handled or unknown)", bogOrderId);
             return;
         }
 
-        // Only process if still in an awaiting-payment state
-        if (order.Status != CustomOrderStatus.Pending)
-        {
-            _logger.LogInformation("Duplicate callback for custom order {OrderId} (status: {Status}) — skipping",
-                order.Id, order.Status);
-            return;
-        }
+        var order = await _db.CustomOrders.FirstAsync(o => o.BogOrderId == bogOrderId);
 
         var result = await _payment.VerifyCallbackAsync(bogOrderId);
 
         order.Status = result.IsApproved ? CustomOrderStatus.Reviewing : CustomOrderStatus.Cancelled;
         order.UpdatedAt = DateTime.UtcNow;
+
+        _db.CustomOrderStatusLogs.Add(new CustomOrderStatusLog
+        {
+            CustomOrderId = order.Id,
+            FromStatus = CustomOrderStatus.AwaitingPayment,
+            ToStatus = order.Status,
+            Notes = $"BOG callback: {(result.IsApproved ? "approved" : "declined")} (txn: {result.TransactionId})",
+        });
 
         await _db.SaveChangesAsync();
 

@@ -8,6 +8,9 @@ public class OrderItem
     // Nullable — product may be deleted after order is placed
     public int? ProductId { get; set; }
 
+    // Nullable — variants may be removed, but we need the ID to restore stock on payment failure
+    public int? VariantId { get; set; }
+
     // Snapshot fields — frozen at time of purchase
     public string ProductName { get; set; } = string.Empty;
     public string ProductSlug { get; set; } = string.Empty;

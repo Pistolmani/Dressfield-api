@@ -17,6 +17,7 @@ public class DressfieldDbContext : IdentityDbContext<ApplicationUser>
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<OrderStatusLog> OrderStatusLogs => Set<OrderStatusLog>();
+    public DbSet<CustomOrderStatusLog> CustomOrderStatusLogs => Set<CustomOrderStatusLog>();
     public DbSet<PendingEmail> PendingEmails => Set<PendingEmail>();
     public DbSet<PromoCode> PromoCodes => Set<PromoCode>();
     public DbSet<Cart> Carts => Set<Cart>();
@@ -70,8 +71,11 @@ public class DressfieldDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.TotalPrice).HasPrecision(18, 2);
             entity.Property(e => e.CustomerNotes).HasMaxLength(1000);
             entity.Property(e => e.AdminNotes).HasMaxLength(1000);
+            entity.Property(e => e.BogOrderId).HasMaxLength(100);
+            entity.Property(e => e.BogOrderKey).HasMaxLength(64);
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.UserId);
+            entity.HasIndex(e => e.BogOrderId).IsUnique();
             entity.HasOne(e => e.User).WithMany().HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.SetNull).IsRequired(false);
             entity.HasOne(e => e.BaseProduct).WithMany().HasForeignKey(e => e.BaseProductId).OnDelete(DeleteBehavior.SetNull).IsRequired(false);
         });
@@ -111,7 +115,7 @@ public class DressfieldDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.AdminNotes).HasMaxLength(1000);
             entity.HasIndex(e => e.Status);
             entity.HasIndex(e => e.UserId);
-            entity.HasIndex(e => e.BogOrderId);
+            entity.HasIndex(e => e.BogOrderId).IsUnique();
             entity.HasOne(e => e.User).WithMany().HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.SetNull).IsRequired(false);
         });
 
@@ -133,6 +137,14 @@ public class DressfieldDbContext : IdentityDbContext<ApplicationUser>
             entity.HasIndex(e => e.OrderId);
             entity.HasIndex(e => e.ChangedAt);
             entity.HasOne(e => e.Order).WithMany().HasForeignKey(e => e.OrderId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        builder.Entity<CustomOrderStatusLog>(entity =>
+        {
+            entity.Property(e => e.Notes).HasMaxLength(1000);
+            entity.HasIndex(e => e.CustomOrderId);
+            entity.HasIndex(e => e.ChangedAt);
+            entity.HasOne(e => e.CustomOrder).WithMany().HasForeignKey(e => e.CustomOrderId).OnDelete(DeleteBehavior.Cascade);
         });
 
         builder.Entity<PendingEmail>(entity =>

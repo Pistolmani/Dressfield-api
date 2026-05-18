@@ -66,9 +66,9 @@ public class PaymentsController : ControllerBase
         if (!IsValidSignature(rawBody, signature))
         {
             _logger.LogError(
-                "BOG callback REJECTED — signature verification failed. RemoteIp={RemoteIp} Signature={Signature}",
+                "BOG callback REJECTED — signature verification failed. RemoteIp={RemoteIp} SigFingerprint={SigFingerprint}",
                 HttpContext.Connection.RemoteIpAddress,
-                signature ?? "<missing>");
+                FingerprintSignature(signature));
             return BadRequest();
         }
 
@@ -106,6 +106,14 @@ public class PaymentsController : ControllerBase
     {
         _logger.LogWarning("Legacy GET /api/payments/callback was called. Real BOG callbacks must use signed POST.");
         return Ok();
+    }
+
+    private static string FingerprintSignature(string? signature)
+    {
+        if (string.IsNullOrEmpty(signature))
+            return "<missing>";
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(signature));
+        return Convert.ToHexString(hash)[..8];
     }
 
     private bool IsValidSignature(string rawBody, string? signature)

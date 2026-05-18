@@ -1,5 +1,7 @@
 ﻿using System.Text;
 using System.Threading.RateLimiting;
+using Polly;
+using Polly.Extensions.Http;
 using System.Data.Common;
 using System.Net.Sockets;
 using System.Text.Json;
@@ -226,7 +228,20 @@ if (string.IsNullOrWhiteSpace(bogClientId))
 }
 else
 {
-    builder.Services.AddHttpClient<BogIPayService>();
+    builder.Services.AddSingleton<IBogTokenProvider, BogTokenProvider>();
+    builder.Services.AddHttpClient(nameof(BogTokenProvider), c =>
+    {
+        c.Timeout = TimeSpan.FromSeconds(10);
+    })
+    .AddTransientHttpErrorPolicy(p => p.WaitAndRetryAsync(
+        3, attempt => TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt))));
+
+    builder.Services.AddHttpClient<BogIPayService>(c =>
+    {
+        c.Timeout = TimeSpan.FromSeconds(15);
+    })
+    .AddTransientHttpErrorPolicy(p => p.WaitAndRetryAsync(
+        3, attempt => TimeSpan.FromMilliseconds(200 * Math.Pow(2, attempt))));
     builder.Services.AddScoped<IPaymentService, BogIPayService>();
 }
 
