@@ -141,7 +141,7 @@ builder.Services.AddRateLimiter(options =>
     options.AddFixedWindowLimiter("upload", o =>
     {
         o.Window      = TimeSpan.FromMinutes(1);
-        o.PermitLimit = 12;
+        o.PermitLimit = 5;
         o.QueueLimit  = 0;
     });
 
@@ -260,6 +260,8 @@ else
     builder.Services.AddScoped<IPaymentService, BogIPayService>();
 }
 
+builder.Services.Configure<Dressfield.Application.Validators.UploadHostOptions>(o =>
+    o.AllowedHosts = builder.Configuration.GetSection("AzureStorage:AllowedUploadHosts").Get<string[]>() ?? []);
 builder.Services.AddValidatorsFromAssemblyContaining<Dressfield.Application.DTOs.RegisterRequest>();
 builder.Services.AddControllers()
     .AddJsonOptions(options =>

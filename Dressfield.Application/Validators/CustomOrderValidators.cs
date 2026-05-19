@@ -1,11 +1,21 @@
 using Dressfield.Application.DTOs;
 using FluentValidation;
+using Microsoft.Extensions.Options;
 
 namespace Dressfield.Application.Validators;
 
+/// <summary>
+/// Configures which hosts are allowed for uploaded design image URLs.
+/// Populated from <c>AzureStorage:AllowedUploadHosts</c> in appsettings.
+/// </summary>
+public class UploadHostOptions
+{
+    public string[] AllowedHosts { get; set; } = [];
+}
+
 public class CreateCustomOrderRequestValidator : AbstractValidator<CreateCustomOrderRequest>
 {
-    public CreateCustomOrderRequestValidator()
+    public CreateCustomOrderRequestValidator(IOptions<UploadHostOptions> uploadHostOptions)
     {
         RuleFor(x => x.ContactName)
             .NotEmpty().WithMessage("სახელი აუცილებელია")
@@ -26,20 +36,20 @@ public class CreateCustomOrderRequestValidator : AbstractValidator<CreateCustomO
         RuleFor(x => x.Designs)
             .NotEmpty().WithMessage("მინიმუმ ერთი დიზაინი საჭიროა");
 
-        RuleForEach(x => x.Designs).SetValidator(new CreateCustomOrderDesignRequestValidator());
+        var allowedHosts = uploadHostOptions.Value.AllowedHosts;
+        RuleForEach(x => x.Designs).SetValidator(new CreateCustomOrderDesignRequestValidator(allowedHosts));
     }
 }
 
 public class CreateCustomOrderDesignRequestValidator : AbstractValidator<CreateCustomOrderDesignRequest>
 {
-    public CreateCustomOrderDesignRequestValidator()
+    public CreateCustomOrderDesignRequestValidator(string[] allowedHosts)
     {
         RuleFor(x => x.DesignImageUrl)
             .NotEmpty().WithMessage("დიზაინის სურათი აუცილებელია")
             .MaximumLength(500).WithMessage("სურათის URL მაქსიმუმ 500 სიმბოლოა")
-            .Must(url => Uri.TryCreate(url, UriKind.Absolute, out var uri)
-                         && uri.Scheme == Uri.UriSchemeHttps)
-            .WithMessage("დიზაინის სურათი უნდა იყოს სწორი HTTPS URL");
+            .Must(url => IsAllowedUploadUrl(url, allowedHosts))
+            .WithMessage("დიზაინის სურათი უნდა იყოს ჩვენი სერვერიდან ატვირთული ფაილი");
 
         RuleFor(x => x.Placement)
             .MaximumLength(50).WithMessage("განთავსება მაქსიმუმ 50 სიმბოლოა");
@@ -52,6 +62,22 @@ public class CreateCustomOrderDesignRequestValidator : AbstractValidator<CreateC
 
         RuleFor(x => x.SortOrder)
             .GreaterThanOrEqualTo(0).WithMessage("რიგითობა ვერ იქნება უარყოფითი");
+    }
+
+    private static bool IsAllowedUploadUrl(string? url, string[] allowedHosts)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return false;
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
+            return false;
+
+        // If no hosts are configured, fall back to HTTPS-only validation (dev convenience)
+        if (allowedHosts.Length == 0)
+            return true;
+
+        return allowedHosts.Any(host =>
+            uri.Host.Equals(host, StringComparison.OrdinalIgnoreCase));
     }
 }
 

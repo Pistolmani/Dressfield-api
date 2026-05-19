@@ -73,6 +73,22 @@ public class AbandonedOrderReaper : BackgroundService
         await CancelStalePendingCustomOrdersAsync(db, pendingCutoff, ct);
         await CancelAbandonedOrdersAsync(db, payment, orders, abandonmentCutoff, ct);
         await CancelAbandonedCustomOrdersAsync(db, payment, customOrders, abandonmentCutoff, ct);
+        await PurgeExpiredRefreshTokensAsync(db, ct);
+    }
+
+    /// <summary>
+    /// Deletes refresh tokens that are either revoked or expired.
+    /// Keeps the table bounded and removes forensic noise.
+    /// </summary>
+    private async Task PurgeExpiredRefreshTokensAsync(DressfieldDbContext db, CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+        var deleted = await db.RefreshTokens
+            .Where(r => r.IsRevoked || r.ExpiresAt < now)
+            .ExecuteDeleteAsync(ct);
+
+        if (deleted > 0)
+            _logger.LogInformation("Purged {Count} expired/revoked refresh token(s)", deleted);
     }
 
     /// <summary>
