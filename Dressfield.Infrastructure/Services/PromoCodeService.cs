@@ -129,6 +129,34 @@ public class PromoCodeService : IPromoCodeService
                 0);
         }
 
+        if (promo.MaxUses.HasValue && promo.UsedCount >= promo.MaxUses.Value)
+        {
+            return new PromoCodeValidationResultDto(
+                false,
+                "პრომო კოდის გამოყენების ლიმიტი ამოწურულია.",
+                null,
+                0,
+                0);
+        }
+
+        if (promo.MaxUsesPerUser.HasValue && !string.IsNullOrEmpty(request.UserId))
+        {
+            var userUses = await _db.Orders
+                .CountAsync(o => o.UserId == request.UserId
+                              && o.PromoCode == promo.Code
+                              && o.Status != Core.Enums.OrderStatus.Cancelled);
+
+            if (userUses >= promo.MaxUsesPerUser.Value)
+            {
+                return new PromoCodeValidationResultDto(
+                    false,
+                    "ამ პრომო კოდის გამოყენების ლიმიტი ამოწურულია.",
+                    null,
+                    0,
+                    0);
+            }
+        }
+
         var discountPercent = ClampPercent(promo.DiscountPercentage);
         var discountAmount = RoundMoney(request.Subtotal * discountPercent / 100m);
 

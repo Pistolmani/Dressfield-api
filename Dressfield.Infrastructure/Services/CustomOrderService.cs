@@ -227,7 +227,7 @@ public class CustomOrderService : ICustomOrderService
             return;
         }
 
-        if (IsPendingBogStatus(result.Status))
+        if (BogPaymentStatus.IsPending(result.Status))
         {
             order.Status = CustomOrderStatus.AwaitingPayment;
             order.UpdatedAt = DateTime.UtcNow;
@@ -321,11 +321,4 @@ public class CustomOrderService : ICustomOrderService
             : 0m;
     }
 
-    private static bool IsPendingBogStatus(string status) =>
-        status.Equals("created", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("processing", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("auth_requested", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("blocked", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("error", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("exception", StringComparison.OrdinalIgnoreCase);
 }

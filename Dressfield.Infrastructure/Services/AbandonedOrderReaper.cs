@@ -21,16 +21,19 @@ public class AbandonedOrderReaper : BackgroundService
     private readonly ILogger<AbandonedOrderReaper> _logger;
     private readonly TimeSpan _interval;
     private readonly TimeSpan _abandonmentTimeout;
+    // Orders stuck in Pending (BOG session never created) are cleaned up faster
+    private readonly TimeSpan _pendingTimeout;
 
     public AbandonedOrderReaper(
         IServiceScopeFactory scopeFactory,
         ILogger<AbandonedOrderReaper> logger,
         IConfiguration config)
     {
-        _scopeFactory = scopeFactory;
-        _logger = logger;
+        _scopeFactory       = scopeFactory;
+        _logger             = logger;
         _interval           = TimeSpan.FromMinutes(config.GetValue("Orders:ReaperIntervalMinutes", 5));
         _abandonmentTimeout = TimeSpan.FromMinutes(config.GetValue("Orders:AbandonmentTimeoutMinutes", 30));
+        _pendingTimeout     = TimeSpan.FromMinutes(config.GetValue("Orders:PendingTimeoutMinutes", 10));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -61,10 +64,114 @@ public class AbandonedOrderReaper : BackgroundService
         var payment = scope.ServiceProvider.GetRequiredService<IPaymentService>();
         var orders = scope.ServiceProvider.GetRequiredService<IOrderService>();
         var customOrders = scope.ServiceProvider.GetRequiredService<ICustomOrderService>();
-        var cutoff = DateTime.UtcNow - _abandonmentTimeout;
 
-        await CancelAbandonedOrdersAsync(db, payment, orders, cutoff, ct);
-        await CancelAbandonedCustomOrdersAsync(db, payment, customOrders, cutoff, ct);
+        var now = DateTime.UtcNow;
+        var abandonmentCutoff = now - _abandonmentTimeout;
+        var pendingCutoff     = now - _pendingTimeout;
+
+        await CancelStalePendingOrdersAsync(db, pendingCutoff, ct);
+        await CancelStalePendingCustomOrdersAsync(db, pendingCutoff, ct);
+        await CancelAbandonedOrdersAsync(db, payment, orders, abandonmentCutoff, ct);
+        await CancelAbandonedCustomOrdersAsync(db, payment, customOrders, abandonmentCutoff, ct);
+    }
+
+    /// <summary>
+    /// Cancels regular orders stuck in <see cref="OrderStatus.Pending"/> — meaning the BOG session
+    /// was never created (or the process crashed before saving <c>BogOrderId</c>).
+    /// These have no payment session so stock would be reserved indefinitely without this cleanup.
+    /// </summary>
+    private async Task CancelStalePendingOrdersAsync(DressfieldDbContext db, DateTime cutoff, CancellationToken ct)
+    {
+        var staleIds = await db.Orders
+            .Where(o => o.Status == OrderStatus.Pending && o.CreatedAt < cutoff)
+            .Select(o => o.Id)
+            .ToListAsync(ct);
+
+        foreach (var id in staleIds)
+        {
+            var claimed = await db.Orders
+                .Where(o => o.Id == id && o.Status == OrderStatus.Pending)
+                .ExecuteUpdateAsync(
+                    s => s.SetProperty(o => o.Status, OrderStatus.Cancelled)
+                          .SetProperty(o => o.UpdatedAt, DateTime.UtcNow),
+                    ct);
+
+            if (claimed == 0)
+                continue;
+
+            var order = await db.Orders
+                .Include(o => o.Items)
+                .FirstAsync(o => o.Id == id, ct);
+
+            db.OrderStatusLogs.Add(new OrderStatusLog
+            {
+                OrderId    = order.Id,
+                FromStatus = OrderStatus.Pending,
+                ToStatus   = OrderStatus.Cancelled,
+                Notes      = "Cancelled — BOG payment session was never created (startup crash or BOG timeout)",
+            });
+
+            foreach (var item in order.Items.Where(i => i.VariantId.HasValue))
+            {
+                await db.ProductVariants
+                    .Where(v => v.Id == item.VariantId!.Value)
+                    .ExecuteUpdateAsync(
+                        s => s.SetProperty(v => v.StockQuantity, v => v.StockQuantity + item.Quantity),
+                        ct);
+            }
+
+            if (!string.IsNullOrEmpty(order.PromoCode))
+            {
+                await db.PromoCodes
+                    .Where(p => p.Code == order.PromoCode && p.UsedCount > 0)
+                    .ExecuteUpdateAsync(
+                        s => s.SetProperty(p => p.UsedCount, p => p.UsedCount - 1),
+                        ct);
+            }
+
+            await db.SaveChangesAsync(ct);
+
+            _logger.LogWarning(
+                "Stale Pending order {OrderId} cancelled and stock restored (created at {CreatedAt})",
+                order.Id, order.CreatedAt);
+        }
+    }
+
+    /// <summary>
+    /// Cancels custom orders stuck in <see cref="CustomOrderStatus.Pending"/> for the same reason.
+    /// Custom orders have no stock to restore but still need to be cleaned up.
+    /// </summary>
+    private async Task CancelStalePendingCustomOrdersAsync(DressfieldDbContext db, DateTime cutoff, CancellationToken ct)
+    {
+        var staleIds = await db.CustomOrders
+            .Where(o => o.Status == CustomOrderStatus.Pending && o.CreatedAt < cutoff)
+            .Select(o => o.Id)
+            .ToListAsync(ct);
+
+        foreach (var id in staleIds)
+        {
+            var claimed = await db.CustomOrders
+                .Where(o => o.Id == id && o.Status == CustomOrderStatus.Pending)
+                .ExecuteUpdateAsync(
+                    s => s.SetProperty(o => o.Status, CustomOrderStatus.Cancelled)
+                          .SetProperty(o => o.UpdatedAt, DateTime.UtcNow),
+                    ct);
+
+            if (claimed == 0)
+                continue;
+
+            db.CustomOrderStatusLogs.Add(new CustomOrderStatusLog
+            {
+                CustomOrderId = id,
+                FromStatus    = CustomOrderStatus.Pending,
+                ToStatus      = CustomOrderStatus.Cancelled,
+                Notes         = "Cancelled — BOG payment session was never created (startup crash or BOG timeout)",
+            });
+
+            await db.SaveChangesAsync(ct);
+
+            _logger.LogWarning("Stale Pending custom order {OrderId} cancelled", id);
+        }
     }
 
     private async Task CancelAbandonedOrdersAsync(
@@ -99,7 +206,7 @@ public class AbandonedOrderReaper : BackgroundService
                     continue;
                 }
 
-                if (IsPendingBogStatus(verification.Status))
+                if (BogPaymentStatus.IsPending(verification.Status))
                 {
                     _logger.LogInformation(
                         "Skipping abandoned cancellation for order {OrderId}; BOG status is still {Status} (BOG: {BogOrderId})",
@@ -189,7 +296,7 @@ public class AbandonedOrderReaper : BackgroundService
                     continue;
                 }
 
-                if (IsPendingBogStatus(verification.Status))
+                if (BogPaymentStatus.IsPending(verification.Status))
                 {
                     _logger.LogInformation(
                         "Skipping abandoned cancellation for custom order {OrderId}; BOG status is still {Status} (BOG: {BogOrderId})",
@@ -222,11 +329,4 @@ public class AbandonedOrderReaper : BackgroundService
         }
     }
 
-    private static bool IsPendingBogStatus(string status) =>
-        status.Equals("created", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("processing", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("auth_requested", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("blocked", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("error", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("exception", StringComparison.OrdinalIgnoreCase);
 }

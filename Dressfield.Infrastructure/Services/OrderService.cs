@@ -14,14 +14,16 @@ public class OrderService : IOrderService
 {
     private readonly DressfieldDbContext _db;
     private readonly IPaymentService _payment;
+    private readonly ICartService _cart;
     private readonly ILogger<OrderService> _logger;
     private readonly decimal _shippingCost;
     private readonly string _paymentPageBaseUrl;
 
-    public OrderService(DressfieldDbContext db, IPaymentService payment, IConfiguration configuration, ILogger<OrderService> logger)
+    public OrderService(DressfieldDbContext db, IPaymentService payment, ICartService cart, IConfiguration configuration, ILogger<OrderService> logger)
     {
         _db = db;
         _payment = payment;
+        _cart = cart;
         _logger = logger;
         _shippingCost = decimal.TryParse(configuration["Orders:ShippingCost"], out var sc) ? sc : 5m;
         _paymentPageBaseUrl = configuration["BogIPay:PaymentPageBaseUrl"] ?? "https://payment.bog.ge/";
@@ -353,7 +355,7 @@ public class OrderService : IOrderService
             return;
         }
 
-        if (IsPendingBogStatus(result.Status))
+        if (BogPaymentStatus.IsPending(result.Status))
         {
             order.Status = OrderStatus.AwaitingPayment;
             order.UpdatedAt = DateTime.UtcNow;
@@ -383,19 +385,36 @@ public class OrderService : IOrderService
             Notes = $"BOG callback: {(result.IsApproved ? "approved" : "declined")} (txn: {result.TransactionId})",
         });
 
-        if (result.IsApproved && !string.IsNullOrEmpty(order.ContactEmail))
+        if (result.IsApproved)
         {
-            var itemsHtml = string.Join("", order.Items.Select(i =>
+            if (!string.IsNullOrEmpty(order.ContactEmail))
             {
-                var name = System.Net.WebUtility.HtmlEncode(i.ProductName);
-                var variant = i.VariantName != null ? $" ({System.Net.WebUtility.HtmlEncode(i.VariantName)})" : "";
-                return $"<tr><td style=\"padding:6px 0;\">{name}{variant}</td>" +
-                       $"<td style=\"padding:6px 0;text-align:center;\">{i.Quantity}</td>" +
-                       $"<td style=\"padding:6px 0;text-align:right;\">₾{i.LineTotal:F2}</td></tr>";
-            }));
-            QueueConfirmationEmail(order.ContactEmail, order.Id, itemsHtml, $"₾{order.TotalAmount:F2}");
+                var itemsHtml = string.Join("", order.Items.Select(i =>
+                {
+                    var name = System.Net.WebUtility.HtmlEncode(i.ProductName);
+                    var variant = i.VariantName != null ? $" ({System.Net.WebUtility.HtmlEncode(i.VariantName)})" : "";
+                    return $"<tr><td style=\"padding:6px 0;\">{name}{variant}</td>" +
+                           $"<td style=\"padding:6px 0;text-align:center;\">{i.Quantity}</td>" +
+                           $"<td style=\"padding:6px 0;text-align:right;\">₾{i.LineTotal:F2}</td></tr>";
+                }));
+                QueueConfirmationEmail(order.ContactEmail, order.Id, itemsHtml, $"₾{order.TotalAmount:F2}");
+            }
+
+            // Clear the cart for authenticated users so it doesn't show stale items
+            if (!string.IsNullOrEmpty(order.UserId))
+            {
+                try
+                {
+                    await _cart.ClearCartAsync(order.UserId);
+                }
+                catch (Exception ex)
+                {
+                    // Non-critical — order is already confirmed; log and continue
+                    _logger.LogError(ex, "Failed to clear cart for user {UserId} after order {OrderId} payment", order.UserId, order.Id);
+                }
+            }
         }
-        else if (!result.IsApproved)
+        else
         {
             await RestoreStockAndPromoAsync(order);
         }
@@ -574,14 +593,6 @@ public class OrderService : IOrderService
 
         return $"{trimmedBaseUrl.TrimEnd('/')}/?order_id={escapedOrderId}";
     }
-
-    private static bool IsPendingBogStatus(string status) =>
-        status.Equals("created", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("processing", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("auth_requested", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("blocked", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("error", StringComparison.OrdinalIgnoreCase)
-        || status.Equals("exception", StringComparison.OrdinalIgnoreCase);
 
     private static decimal CalculateDiscountedProductPrice(decimal basePrice, decimal salePercentage)
     {

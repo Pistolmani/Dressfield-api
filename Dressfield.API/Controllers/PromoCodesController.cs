@@ -42,7 +42,11 @@ public class PromoCodesController : ControllerBase
             return BadRequest(validation.Errors.Select(e => e.ErrorMessage));
         }
 
-        return Ok(await _promoCodes.ValidateAsync(request));
+        // Attach the caller's userId so per-user limits are enforced at validation time
+        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        var enriched = request with { UserId = userId };
+
+        return Ok(await _promoCodes.ValidateAsync(enriched));
     }
 
     [HttpGet("admin")]

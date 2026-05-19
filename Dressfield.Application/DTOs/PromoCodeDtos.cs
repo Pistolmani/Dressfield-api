@@ -23,7 +23,9 @@ public record UpdatePromoCodeRequest(
 
 public record ValidatePromoCodeRequest(
     string Code,
-    decimal Subtotal);
+    decimal Subtotal,
+    // Optional — when present, per-user usage limits are enforced at validation time
+    string? UserId = null);
 
 public record PromoCodeValidationResultDto(
     bool IsValid,
