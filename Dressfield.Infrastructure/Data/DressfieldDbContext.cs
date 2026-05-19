@@ -112,6 +112,8 @@ public class DressfieldDbContext : IdentityDbContext<ApplicationUser>
             entity.Property(e => e.BogOrderId).HasMaxLength(100);
             entity.Property(e => e.BogOrderKey).HasMaxLength(64);
             entity.Property(e => e.IdempotencyKey).HasMaxLength(64);
+            entity.Property(e => e.TrackingNumber).HasMaxLength(100);
+            entity.Property(e => e.TrackingUrl).HasMaxLength(500);
             entity.Property(e => e.CustomerNotes).HasMaxLength(1000);
             entity.Property(e => e.AdminNotes).HasMaxLength(1000);
             entity.HasIndex(e => e.Status);

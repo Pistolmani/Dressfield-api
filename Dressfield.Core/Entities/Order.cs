@@ -37,6 +37,10 @@ public class Order
     // Nullable — only set for authenticated users; guards against double-submit on network retry
     public string? IdempotencyKey { get; set; }
 
+    // Shipping tracking (set by admin when order is marked Shipped)
+    public string? TrackingNumber { get; set; }
+    public string? TrackingUrl { get; set; }
+
     public string? CustomerNotes { get; set; }
     public string? AdminNotes { get; set; }
 

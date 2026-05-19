@@ -28,7 +28,9 @@ public record OrderSummaryDto(
 public record OrderStatusLookupDto(
     int OrderId,
     OrderStatus Status,
-    DateTime UpdatedAt);
+    DateTime UpdatedAt,
+    string? TrackingNumber = null,
+    string? TrackingUrl = null);
 
 public record OrderDetailDto(
     int Id,
@@ -47,6 +49,8 @@ public record OrderDetailDto(
     string? PromoCode,
     decimal ShippingCost,
     decimal TotalAmount,
+    string? TrackingNumber,
+    string? TrackingUrl,
     string? CustomerNotes,
     string? AdminNotes,
     string? BogOrderId,
@@ -74,6 +78,8 @@ public record CreateOrderRequest(
 public record UpdateOrderStatusRequest(
     OrderStatus Status,
     string? AdminNotes,
+    string? TrackingNumber = null,
+    string? TrackingUrl = null,
     string? ChangedByUserId = null);
 
 public record CheckoutResponse(

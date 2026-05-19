@@ -64,13 +64,21 @@ public class OrderService : IOrderService
 
     public async Task UpdateStatusAsync(int id, UpdateOrderStatusRequest request)
     {
-        var order = await _db.Orders.FindAsync(id)
+        var order = await _db.Orders
+            .Include(o => o.Items)
+            .FirstOrDefaultAsync(o => o.Id == id)
             ?? throw new KeyNotFoundException("შეკვეთა ვერ მოიძებნა");
 
         var previousStatus = order.Status;
         order.Status = request.Status;
         order.AdminNotes = request.AdminNotes?.Trim();
         order.UpdatedAt = DateTime.UtcNow;
+
+        // Persist tracking info when transitioning to Shipped (or updating it later)
+        if (!string.IsNullOrWhiteSpace(request.TrackingNumber))
+            order.TrackingNumber = request.TrackingNumber.Trim();
+        if (!string.IsNullOrWhiteSpace(request.TrackingUrl))
+            order.TrackingUrl = request.TrackingUrl.Trim();
 
         _db.OrderStatusLogs.Add(new OrderStatusLog
         {
@@ -82,7 +90,7 @@ public class OrderService : IOrderService
         });
 
         if (request.Status == OrderStatus.Shipped && !string.IsNullOrEmpty(order.ContactEmail))
-            QueueShippingEmail(order.ContactEmail, order.Id);
+            QueueShippingEmail(order);
 
         await _db.SaveChangesAsync();
     }
@@ -127,7 +135,9 @@ public class OrderService : IOrderService
             .Select(o => new OrderStatusLookupDto(
                 o.Id,
                 o.Status,
-                o.UpdatedAt))
+                o.UpdatedAt,
+                o.TrackingNumber,
+                o.TrackingUrl))
             .FirstOrDefaultAsync();
     }
 
@@ -499,6 +509,8 @@ public class OrderService : IOrderService
             order.PromoCode,
             order.ShippingCost,
             order.TotalAmount,
+            order.TrackingNumber,
+            order.TrackingUrl,
             order.CustomerNotes,
             order.AdminNotes,
             order.BogOrderId,
@@ -521,50 +533,108 @@ public class OrderService : IOrderService
     private void QueueConfirmationEmail(string to, int orderId, string itemsHtml, string total)
     {
         var html = $"""
-            <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px;">
-                <h2 style="margin-bottom:4px;">შეკვეთა წარმატებით გაფორმდა!</h2>
+            <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#333;">
+                <h2 style="margin-bottom:4px;">გადახდა წარმატებით შესრულდა!</h2>
                 <p style="color:#888;margin-top:0;">შეკვეთის ნომერი: <strong>#{orderId}</strong></p>
+
                 <table style="width:100%;border-collapse:collapse;margin:16px 0;">
                     <thead>
-                        <tr style="border-bottom:1px solid #eee;text-align:left;font-size:13px;color:#888;">
+                        <tr style="border-bottom:2px solid #eee;text-align:left;font-size:13px;color:#888;">
                             <th style="padding:8px 0;">პროდუქტი</th>
-                            <th style="padding:8px 0;">რ-ბა</th>
+                            <th style="padding:8px 0;text-align:center;">რ-ბა</th>
                             <th style="padding:8px 0;text-align:right;">ფასი</th>
                         </tr>
                     </thead>
                     <tbody>{itemsHtml}</tbody>
                 </table>
-                <p style="font-size:16px;font-weight:600;text-align:right;">სულ: {total}</p>
+
+                <p style="font-size:16px;font-weight:600;text-align:right;margin:16px 0;">სულ: {total}</p>
+
+                <div style="background:#f9f9f9;border-radius:8px;padding:16px;margin:16px 0;">
+                    <p style="margin:0 0 4px;font-size:14px;font-weight:600;">რა ხდება შემდეგ?</p>
+                    <p style="margin:0;font-size:13px;color:#666;">ჩვენ მოვამზადებთ თქვენს შეკვეთას და გამოგზავნისას მიიღებთ შეტყობინებას ტრეკინგ ნომრით.</p>
+                </div>
+
                 <hr style="border:none;border-top:1px solid #eee;margin:20px 0;" />
-                <p style="color:#888;font-size:13px;">გმადლობთ შეკვეთისთვის! ჩვენი გუნდი დაგიკავშირდებათ მალე.</p>
-                <p style="color:#888;font-size:13px;">— DressField</p>
+                <p style="color:#888;font-size:13px;margin:0;">გმადლობთ, რომ აირჩიეთ DressField!</p>
             </div>
             """;
 
         _db.PendingEmails.Add(new PendingEmail
         {
             ToEmail = to,
-            Subject = $"შეკვეთა #{orderId} — DressField",
+            Subject = $"შეკვეთა #{orderId} დადასტურებულია — DressField",
             HtmlBody = html,
         });
     }
 
-    private void QueueShippingEmail(string to, int orderId)
+    private void QueueShippingEmail(Order order)
     {
+        var safeName = System.Net.WebUtility.HtmlEncode(order.ContactName);
+        var safeCity = System.Net.WebUtility.HtmlEncode(order.ShippingCity);
+        var safeAddress = System.Net.WebUtility.HtmlEncode(order.ShippingAddressLine1);
+
+        var itemsHtml = string.Join("", order.Items.Select(i =>
+        {
+            var name = System.Net.WebUtility.HtmlEncode(i.ProductName);
+            var variant = i.VariantName != null ? $" ({System.Net.WebUtility.HtmlEncode(i.VariantName)})" : "";
+            return $"<tr><td style=\"padding:6px 0;font-size:14px;\">{name}{variant}</td>" +
+                   $"<td style=\"padding:6px 0;text-align:center;font-size:14px;\">{i.Quantity}</td></tr>";
+        }));
+
+        var trackingSection = "";
+        if (!string.IsNullOrWhiteSpace(order.TrackingNumber))
+        {
+            var safeTrackingNumber = System.Net.WebUtility.HtmlEncode(order.TrackingNumber);
+
+            trackingSection = !string.IsNullOrWhiteSpace(order.TrackingUrl)
+                ? $"""
+                    <div style="background:#f0f7f0;border-radius:8px;padding:16px;margin:16px 0;">
+                        <p style="margin:0 0 4px;font-size:14px;font-weight:600;">ტრეკინგ ნომერი</p>
+                        <p style="margin:0;font-size:15px;">
+                            <a href="{System.Net.WebUtility.HtmlEncode(order.TrackingUrl)}" style="color:#2563eb;text-decoration:underline;">{safeTrackingNumber}</a>
+                        </p>
+                    </div>
+                    """
+                : $"""
+                    <div style="background:#f0f7f0;border-radius:8px;padding:16px;margin:16px 0;">
+                        <p style="margin:0 0 4px;font-size:14px;font-weight:600;">ტრეკინგ ნომერი</p>
+                        <p style="margin:0;font-size:15px;">{safeTrackingNumber}</p>
+                    </div>
+                    """;
+        }
+
         var html = $"""
-            <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px;">
-                <h2>თქვენი შეკვეთა გაიგზავნა!</h2>
-                <p>შეკვეთის ნომერი: <strong>#{orderId}</strong></p>
-                <p>თქვენი შეკვეთა გაგზავნილია და მალე მიიღებთ.</p>
+            <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#333;">
+                <h2 style="margin-bottom:4px;">თქვენი შეკვეთა გაიგზავნა! 📦</h2>
+                <p style="color:#888;margin-top:0;">შეკვეთის ნომერი: <strong>#{order.Id}</strong></p>
+
+                {trackingSection}
+
+                <table style="width:100%;border-collapse:collapse;margin:16px 0;">
+                    <thead>
+                        <tr style="border-bottom:2px solid #eee;text-align:left;font-size:13px;color:#888;">
+                            <th style="padding:8px 0;">პროდუქტი</th>
+                            <th style="padding:8px 0;text-align:center;">რ-ბა</th>
+                        </tr>
+                    </thead>
+                    <tbody>{itemsHtml}</tbody>
+                </table>
+
+                <div style="background:#f9f9f9;border-radius:8px;padding:16px;margin:16px 0;">
+                    <p style="margin:0 0 4px;font-size:14px;font-weight:600;">მიტანის მისამართი</p>
+                    <p style="margin:0;font-size:13px;color:#666;">{safeName}<br/>{safeAddress}<br/>{safeCity}</p>
+                </div>
+
                 <hr style="border:none;border-top:1px solid #eee;margin:20px 0;" />
-                <p style="color:#888;font-size:13px;">— DressField</p>
+                <p style="color:#888;font-size:13px;margin:0;">გმადლობთ, რომ აირჩიეთ DressField!</p>
             </div>
             """;
 
         _db.PendingEmails.Add(new PendingEmail
         {
-            ToEmail = to,
-            Subject = $"შეკვეთა #{orderId} გაიგზავნა — DressField",
+            ToEmail = order.ContactEmail,
+            Subject = $"შეკვეთა #{order.Id} გაიგზავნა — DressField",
             HtmlBody = html,
         });
     }

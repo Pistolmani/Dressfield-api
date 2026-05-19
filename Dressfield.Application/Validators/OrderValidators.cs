@@ -69,6 +69,14 @@ public class UpdateOrderStatusRequestValidator : AbstractValidator<UpdateOrderSt
 
         RuleFor(x => x.AdminNotes)
             .MaximumLength(1000).WithMessage("Admin notes must be 1000 characters or less");
+
+        RuleFor(x => x.TrackingNumber)
+            .MaximumLength(100).WithMessage("Tracking number must be 100 characters or less");
+
+        RuleFor(x => x.TrackingUrl)
+            .MaximumLength(500).WithMessage("Tracking URL must be 500 characters or less")
+            .Must(url => url is null || Uri.TryCreate(url, UriKind.Absolute, out _))
+            .WithMessage("Tracking URL must be a valid URL");
     }
 }
 
