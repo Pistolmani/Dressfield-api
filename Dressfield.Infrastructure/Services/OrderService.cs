@@ -343,11 +343,17 @@ public class OrderService : IOrderService
 
         var result = await _payment.VerifyCallbackAsync(bogOrderId);
 
-        if (result.VerifiedAmount.HasValue && Math.Abs(result.VerifiedAmount.Value - order.TotalAmount) > 0.01m)
+        var currencyOk = string.Equals(result.Currency, "GEL", StringComparison.OrdinalIgnoreCase);
+        var amountOk = result.VerifiedAmount.HasValue
+                       && Math.Abs(result.VerifiedAmount.Value - order.TotalAmount) <= 0.01m;
+
+        if (result.IsApproved && (!currencyOk || !amountOk))
         {
+            var reason = BuildMismatchReason(order.TotalAmount, result, currencyOk, amountOk);
+
             _logger.LogCritical(
-                "BOG amount mismatch for order {OrderId}: expected {Expected:F2}, got {Got:F2} (BOG: {BogOrderId})",
-                order.Id, order.TotalAmount, result.VerifiedAmount.Value, bogOrderId);
+                "BOG payment verification failed for order {OrderId} — {Reason} (BOG: {BogOrderId})",
+                order.Id, reason, bogOrderId);
 
             order.Status = OrderStatus.Cancelled;
             order.UpdatedAt = DateTime.UtcNow;
@@ -357,7 +363,7 @@ public class OrderService : IOrderService
                 OrderId = order.Id,
                 FromStatus = OrderStatus.PaymentProcessing,
                 ToStatus = OrderStatus.Cancelled,
-                Notes = $"Amount mismatch: expected ₾{order.TotalAmount:F2}, BOG reported ₾{result.VerifiedAmount.Value:F2}",
+                Notes = reason,
             });
 
             await RestoreStockAndPromoAsync(order);
@@ -668,5 +674,23 @@ public class OrderService : IOrderService
     {
         var percent = NormalizePercent(salePercentage);
         return RoundMoney(basePrice * (1m - percent / 100m));
+    }
+
+    internal static string BuildMismatchReason(
+        decimal expectedAmount,
+        PaymentVerificationResult result,
+        bool currencyOk,
+        bool amountOk)
+    {
+        var parts = new List<string>(2);
+        if (!currencyOk)
+            parts.Add($"Currency mismatch: expected GEL, BOG reported {result.Currency ?? "<missing>"}");
+        if (!amountOk)
+        {
+            parts.Add(result.VerifiedAmount.HasValue
+                ? $"Amount mismatch: expected ₾{expectedAmount:F2}, BOG reported ₾{result.VerifiedAmount.Value:F2}"
+                : $"Amount missing from BOG receipt (expected ₾{expectedAmount:F2})");
+        }
+        return string.Join("; ", parts);
     }
 }

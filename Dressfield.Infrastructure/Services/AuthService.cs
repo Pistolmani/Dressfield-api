@@ -11,6 +11,7 @@ using Google.Apis.Auth;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 
@@ -23,19 +24,33 @@ public class AuthService : IAuthService
     private readonly IConfiguration _config;
     private readonly IEmailService _emailService;
     private readonly ILogger<AuthService> _logger;
+    private readonly byte[] _refreshTokenPepper;
 
     public AuthService(
         UserManager<ApplicationUser> userManager,
         DressfieldDbContext db,
         IConfiguration config,
         IEmailService emailService,
-        ILogger<AuthService> logger)
+        ILogger<AuthService> logger,
+        IHostEnvironment env)
     {
         _userManager = userManager;
         _db = db;
         _config = config;
         _emailService = emailService;
         _logger = logger;
+
+        var pepper = config["Jwt:RefreshTokenPepper"];
+        if (string.IsNullOrWhiteSpace(pepper))
+        {
+            if (!env.IsDevelopment())
+                throw new InvalidOperationException(
+                    "Jwt:RefreshTokenPepper must be configured outside Development. " +
+                    "Set a 32+ byte random secret via Azure environment variable Jwt__RefreshTokenPepper.");
+            // Dev convenience: derive a stable per-process pepper from the JWT secret.
+            pepper = config["Jwt:Secret"] ?? "dev-refresh-token-pepper";
+        }
+        _refreshTokenPepper = Encoding.UTF8.GetBytes(pepper);
     }
 
     public async Task<AuthResponse> RegisterAsync(RegisterRequest request)
@@ -84,22 +99,36 @@ public class AuthService : IAuthService
 
     public async Task<AuthResponse> RefreshTokenAsync(string refreshToken)
     {
-        var tokenHash = HashToken(refreshToken);
-
-        // Atomic single-use revocation: UPDATE only if the token is still valid.
-        // ExecuteUpdateAsync issues a single UPDATE … WHERE, so concurrent requests
-        // racing on the same token will both attempt the update but only one row will
-        // be affected — the second will get rowsUpdated == 0 and be rejected.
+        // Try the current HMAC scheme first. Atomic single-use revocation: ExecuteUpdateAsync
+        // issues a single UPDATE … WHERE, so two concurrent requests racing on the same token
+        // both attempt the update but only one row is affected — the loser is rejected.
+        var primaryHash = ComputeRefreshTokenHash(refreshToken);
         var rowsUpdated = await _db.RefreshTokens
-            .Where(r => r.Token == tokenHash && !r.IsRevoked && r.ExpiresAt > DateTime.UtcNow)
+            .Where(r => r.Token == primaryHash && !r.IsRevoked && r.ExpiresAt > DateTime.UtcNow)
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.IsRevoked, true));
 
+        var matchedHash = primaryHash;
+
         if (rowsUpdated == 0)
-            throw new UnauthorizedAccessException("Invalid refresh token");
+        {
+            // Legacy fallback: refresh tokens issued before the HMAC migration were stored as
+            // raw SHA-256. Try matching that scheme; on a hit, the issued replacement token is
+            // already stored under the new HMAC scheme. After the longest refresh-token lifetime
+            // elapses post-deploy, this fallback can be removed in a follow-up PR.
+            var legacyHash = ComputeLegacyRefreshTokenHash(refreshToken);
+            rowsUpdated = await _db.RefreshTokens
+                .Where(r => r.Token == legacyHash && !r.IsRevoked && r.ExpiresAt > DateTime.UtcNow)
+                .ExecuteUpdateAsync(s => s.SetProperty(r => r.IsRevoked, true));
+
+            if (rowsUpdated == 0)
+                throw new UnauthorizedAccessException("Invalid refresh token");
+
+            matchedHash = legacyHash;
+        }
 
         var stored = await _db.RefreshTokens
             .Include(r => r.User)
-            .FirstAsync(r => r.Token == tokenHash);
+            .FirstAsync(r => r.Token == matchedHash);
 
         return await GenerateAuthResponse(stored.User);
     }
@@ -122,7 +151,9 @@ public class AuthService : IAuthService
         if (user == null) return; // Don't reveal if email exists
 
         var token = await _userManager.GeneratePasswordResetTokenAsync(user);
-        var resetLink = $"{resetBaseUrl}?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(token)}";
+        // Fragment-encoded so the reset token never reaches the server in Referer headers,
+        // proxy access logs, or analytics that parse the query string.
+        var resetLink = $"{resetBaseUrl}#email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(token)}";
         await _emailService.SendPasswordResetEmailAsync(email, resetLink);
     }
 
@@ -284,7 +315,7 @@ public class AuthService : IAuthService
 
         _db.RefreshTokens.Add(new RefreshToken
         {
-            Token = HashToken(rawToken),
+            Token = ComputeRefreshTokenHash(rawToken),
             UserId = userId,
             ExpiresAt = DateTime.UtcNow.AddDays(int.Parse(_config["Jwt:RefreshTokenExpirationDays"] ?? "7"))
         });
@@ -293,7 +324,13 @@ public class AuthService : IAuthService
         return rawToken;
     }
 
-    private static string HashToken(string token)
+    private string ComputeRefreshTokenHash(string token)
+    {
+        var bytes = HMACSHA256.HashData(_refreshTokenPepper, Encoding.UTF8.GetBytes(token));
+        return Convert.ToBase64String(bytes);
+    }
+
+    private static string ComputeLegacyRefreshTokenHash(string token)
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
         return Convert.ToBase64String(bytes);

@@ -34,6 +34,10 @@ public class LocalStorageService : IStorageService
         return $"{_baseUrl}/uploads/designs/{blobName}";
     }
 
+    // Local dev storage is already served from a non-authenticated HTTP endpoint; the SAS
+    // concept doesn't apply, so we hand back the URL unchanged.
+    public string GetSignedReadUrl(string storedUrl) => storedUrl;
+
     public Task DeleteAsync(string fileUrl)
     {
         try

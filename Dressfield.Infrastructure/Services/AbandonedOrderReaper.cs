@@ -23,17 +23,23 @@ public class AbandonedOrderReaper : BackgroundService
     private readonly TimeSpan _abandonmentTimeout;
     // Orders stuck in Pending (BOG session never created) are cleaned up faster
     private readonly TimeSpan _pendingTimeout;
+    // Orders stuck in PaymentProcessing (crash during callback) are reset after a window
+    // wide enough to avoid clobbering a slow but legitimate in-flight verification.
+    // Real BOG verifications complete in <2s, but network retries or BOG-side latency can push
+    // a healthy callback well past 5min; 15min is the conservative default.
+    private readonly TimeSpan _paymentProcessingTimeout;
 
     public AbandonedOrderReaper(
         IServiceScopeFactory scopeFactory,
         ILogger<AbandonedOrderReaper> logger,
         IConfiguration config)
     {
-        _scopeFactory       = scopeFactory;
-        _logger             = logger;
-        _interval           = TimeSpan.FromMinutes(config.GetValue("Orders:ReaperIntervalMinutes", 5));
-        _abandonmentTimeout = TimeSpan.FromMinutes(config.GetValue("Orders:AbandonmentTimeoutMinutes", 30));
-        _pendingTimeout     = TimeSpan.FromMinutes(config.GetValue("Orders:PendingTimeoutMinutes", 10));
+        _scopeFactory              = scopeFactory;
+        _logger                    = logger;
+        _interval                  = TimeSpan.FromMinutes(config.GetValue("Orders:ReaperIntervalMinutes", 5));
+        _abandonmentTimeout        = TimeSpan.FromMinutes(config.GetValue("Orders:AbandonmentTimeoutMinutes", 30));
+        _pendingTimeout            = TimeSpan.FromMinutes(config.GetValue("Orders:PendingTimeoutMinutes", 10));
+        _paymentProcessingTimeout  = TimeSpan.FromMinutes(config.GetValue("Orders:PaymentProcessingTimeoutMinutes", 15));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -66,14 +72,53 @@ public class AbandonedOrderReaper : BackgroundService
         var customOrders = scope.ServiceProvider.GetRequiredService<ICustomOrderService>();
 
         var now = DateTime.UtcNow;
-        var abandonmentCutoff = now - _abandonmentTimeout;
-        var pendingCutoff     = now - _pendingTimeout;
+        var abandonmentCutoff          = now - _abandonmentTimeout;
+        var pendingCutoff              = now - _pendingTimeout;
+        var paymentProcessingCutoff    = now - _paymentProcessingTimeout;
 
         await CancelStalePendingOrdersAsync(db, pendingCutoff, ct);
         await CancelStalePendingCustomOrdersAsync(db, pendingCutoff, ct);
+        // Reset before CancelAbandoned so the same cycle can pick up and resolve the recovered orders
+        await ResetStuckPaymentProcessingOrdersAsync(db, paymentProcessingCutoff, ct);
+        await ResetStuckPaymentProcessingCustomOrdersAsync(db, paymentProcessingCutoff, ct);
         await CancelAbandonedOrdersAsync(db, payment, orders, abandonmentCutoff, ct);
         await CancelAbandonedCustomOrdersAsync(db, payment, customOrders, abandonmentCutoff, ct);
         await PurgeExpiredRefreshTokensAsync(db, ct);
+    }
+
+    /// <summary>
+    /// Resets orders stuck in <see cref="OrderStatus.PaymentProcessing"/> back to
+    /// <see cref="OrderStatus.AwaitingPayment"/> so the existing abandoned-order path can resolve them.
+    /// An order enters PaymentProcessing when a callback is claimed but can get stuck there if the
+    /// process crashes before the BOG verification completes (which normally takes &lt;2 seconds).
+    /// Resetting without changing UpdatedAt lets CancelAbandonedOrdersAsync pick up the order in the
+    /// same reaper cycle (if it has already exceeded the abandonment timeout).
+    /// </summary>
+    private async Task ResetStuckPaymentProcessingOrdersAsync(DressfieldDbContext db, DateTime cutoff, CancellationToken ct)
+    {
+        var count = await db.Orders
+            .Where(o => o.Status == OrderStatus.PaymentProcessing && o.UpdatedAt < cutoff)
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, OrderStatus.AwaitingPayment), ct);
+
+        if (count > 0)
+            _logger.LogWarning(
+                "Reset {Count} order(s) from PaymentProcessing → AwaitingPayment (likely crash during callback verification)",
+                count);
+    }
+
+    /// <summary>
+    /// Same recovery for custom orders stuck in <see cref="CustomOrderStatus.PaymentProcessing"/>.
+    /// </summary>
+    private async Task ResetStuckPaymentProcessingCustomOrdersAsync(DressfieldDbContext db, DateTime cutoff, CancellationToken ct)
+    {
+        var count = await db.CustomOrders
+            .Where(o => o.Status == CustomOrderStatus.PaymentProcessing && o.UpdatedAt < cutoff)
+            .ExecuteUpdateAsync(s => s.SetProperty(o => o.Status, CustomOrderStatus.AwaitingPayment), ct);
+
+        if (count > 0)
+            _logger.LogWarning(
+                "Reset {Count} custom order(s) from PaymentProcessing → AwaitingPayment (likely crash during callback verification)",
+                count);
     }
 
     /// <summary>

@@ -1,4 +1,6 @@
 using Dressfield.Core.Interfaces;
+using Dressfield.Infrastructure.Data;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -11,11 +13,13 @@ namespace Dressfield.Infrastructure.Services;
 public class MockPaymentService : IPaymentService
 {
     private readonly ILogger<MockPaymentService> _logger;
+    private readonly DressfieldDbContext _db;
     private readonly string _siteBaseUrl;
 
-    public MockPaymentService(IConfiguration config, ILogger<MockPaymentService> logger)
+    public MockPaymentService(IConfiguration config, ILogger<MockPaymentService> logger, DressfieldDbContext db)
     {
         _logger = logger;
+        _db = db;
         _siteBaseUrl = config["BogIPay:CallbackBaseUrl"] ?? "http://localhost:3000";
     }
 
@@ -32,9 +36,22 @@ public class MockPaymentService : IPaymentService
         return Task.FromResult(new PaymentSessionResult(true, redirectUrl, bogOrderId, null));
     }
 
-    public Task<PaymentVerificationResult> VerifyCallbackAsync(string bogOrderId)
+    public async Task<PaymentVerificationResult> VerifyCallbackAsync(string bogOrderId)
     {
         _logger.LogWarning("[MockPayment] Verifying mock order {BogOrderId} — always approved.", bogOrderId);
-        return Task.FromResult(new PaymentVerificationResult(true, bogOrderId, $"MOCK-TXN-{Guid.NewGuid():N}", "completed"));
+
+        // Look up the order's stored total so the consumer's amount-mismatch check passes in dev.
+        var amount = await _db.Orders
+            .Where(o => o.BogOrderId == bogOrderId)
+            .Select(o => (decimal?)o.TotalAmount)
+            .FirstOrDefaultAsync();
+
+        amount ??= await _db.CustomOrders
+            .Where(o => o.BogOrderId == bogOrderId)
+            .Select(o => (decimal?)o.TotalPrice)
+            .FirstOrDefaultAsync();
+
+        return new PaymentVerificationResult(
+            true, bogOrderId, $"MOCK-TXN-{Guid.NewGuid():N}", "completed", amount, "GEL");
     }
 }

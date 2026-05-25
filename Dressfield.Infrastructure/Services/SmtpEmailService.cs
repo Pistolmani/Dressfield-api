@@ -45,11 +45,11 @@ public class SmtpEmailService : IEmailService
             await client.SendAsync(message);
             await client.DisconnectAsync(true);
 
-            _logger.LogInformation("Email sent to {To} subject={Subject}", to, subject);
+            _logger.LogInformation("Email sent to {To} subject={Subject}", LogSanitizer.MaskEmail(to), subject);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send email to {To} subject={Subject}", to, subject);
+            _logger.LogError(ex, "Failed to send email to {To} subject={Subject}", LogSanitizer.MaskEmail(to), subject);
             throw;
         }
     }

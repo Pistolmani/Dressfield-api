@@ -13,6 +13,7 @@ public class CustomOrderService : ICustomOrderService
 {
     private readonly DressfieldDbContext _db;
     private readonly IPaymentService _payment;
+    private readonly IStorageService _storage;
     private readonly ILogger<CustomOrderService> _logger;
 
     private static readonly IReadOnlyDictionary<string, decimal> EmbroiderySizeExtraPrices =
@@ -24,10 +25,15 @@ public class CustomOrderService : ICustomOrderService
             ["XL"] = 35m
         };
 
-    public CustomOrderService(DressfieldDbContext db, IPaymentService payment, ILogger<CustomOrderService> logger)
+    public CustomOrderService(
+        DressfieldDbContext db,
+        IPaymentService payment,
+        IStorageService storage,
+        ILogger<CustomOrderService> logger)
     {
         _db = db;
         _payment = payment;
+        _storage = storage;
         _logger = logger;
     }
 
@@ -206,11 +212,17 @@ public class CustomOrderService : ICustomOrderService
 
         var result = await _payment.VerifyCallbackAsync(bogOrderId);
 
-        if (result.VerifiedAmount.HasValue && Math.Abs(result.VerifiedAmount.Value - order.TotalPrice) > 0.01m)
+        var currencyOk = string.Equals(result.Currency, "GEL", StringComparison.OrdinalIgnoreCase);
+        var amountOk = result.VerifiedAmount.HasValue
+                       && Math.Abs(result.VerifiedAmount.Value - order.TotalPrice) <= 0.01m;
+
+        if (result.IsApproved && (!currencyOk || !amountOk))
         {
+            var reason = OrderService.BuildMismatchReason(order.TotalPrice, result, currencyOk, amountOk);
+
             _logger.LogCritical(
-                "BOG amount mismatch for custom order {OrderId}: expected {Expected:F2}, got {Got:F2} (BOG: {BogOrderId})",
-                order.Id, order.TotalPrice, result.VerifiedAmount.Value, bogOrderId);
+                "BOG payment verification failed for custom order {OrderId} — {Reason} (BOG: {BogOrderId})",
+                order.Id, reason, bogOrderId);
 
             order.Status = CustomOrderStatus.Cancelled;
             order.UpdatedAt = DateTime.UtcNow;
@@ -220,7 +232,7 @@ public class CustomOrderService : ICustomOrderService
                 CustomOrderId = order.Id,
                 FromStatus = CustomOrderStatus.PaymentProcessing,
                 ToStatus = CustomOrderStatus.Cancelled,
-                Notes = $"Amount mismatch: expected ₾{order.TotalPrice:F2}, BOG reported ₾{result.VerifiedAmount.Value:F2}",
+                Notes = reason,
             });
 
             await _db.SaveChangesAsync();
@@ -261,7 +273,7 @@ public class CustomOrderService : ICustomOrderService
             order.Id, result.IsApproved ? "approved" : "declined", bogOrderId);
     }
 
-    private static CustomOrderDetailDto MapDetail(CustomOrder o) =>
+    private CustomOrderDetailDto MapDetail(CustomOrder o) =>
         new(
             o.Id,
             o.UserId,
@@ -280,7 +292,7 @@ public class CustomOrderService : ICustomOrderService
                 .OrderBy(d => d.SortOrder)
                 .Select(d => new CustomOrderDesignDto(
                     d.Id,
-                    d.DesignImageUrl,
+                    _storage.GetSignedReadUrl(d.DesignImageUrl),
                     d.Placement,
                     d.Size,
                     d.ThreadColor,

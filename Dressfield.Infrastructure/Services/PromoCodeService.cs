@@ -3,17 +3,30 @@ using Dressfield.Application.Interfaces;
 using Dressfield.Core.Entities;
 using Dressfield.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using System.Linq.Expressions;
 
 namespace Dressfield.Infrastructure.Services;
 
 public class PromoCodeService : IPromoCodeService
 {
-    private readonly DressfieldDbContext _db;
+    private const string OpaqueInvalidMessage = "პრომო კოდი არასწორია ან მიუწვდომელია.";
 
-    public PromoCodeService(DressfieldDbContext db)
+    private readonly DressfieldDbContext _db;
+    private readonly ILogger<PromoCodeService> _logger;
+
+    public PromoCodeService(DressfieldDbContext db, ILogger<PromoCodeService> logger)
     {
         _db = db;
+        _logger = logger;
+    }
+
+    private PromoCodeValidationResultDto InvalidResult(string serverReason, string code)
+    {
+        // Server-side log keeps the precise reason for diagnostics; clients always get the
+        // same opaque response so promo-code state can't be enumerated through this endpoint.
+        _logger.LogInformation("Promo code validation rejected ({Reason}) code={Code}", serverReason, code);
+        return new PromoCodeValidationResultDto(false, OpaqueInvalidMessage, null, 0, 0);
     }
 
     public async Task<IReadOnlyCollection<PromoCodeDto>> GetAdminAsync()
@@ -84,60 +97,26 @@ public class PromoCodeService : IPromoCodeService
 
     public async Task<PromoCodeValidationResultDto> ValidateAsync(ValidatePromoCodeRequest request)
     {
-        if (request.Subtotal <= 0)
-        {
-            return new PromoCodeValidationResultDto(
-                false,
-                "კალათა ცარიელია.",
-                null,
-                0,
-                0);
-        }
-
         var normalizedCode = NormalizeCode(request.Code);
+
+        if (request.Subtotal <= 0)
+            return InvalidResult("empty-cart", normalizedCode);
+
         if (string.IsNullOrWhiteSpace(normalizedCode))
-        {
-            return new PromoCodeValidationResultDto(
-                false,
-                "პრომო კოდი ცარიელია.",
-                null,
-                0,
-                0);
-        }
+            return InvalidResult("empty-code", normalizedCode);
 
         var promo = await _db.PromoCodes
             .AsNoTracking()
             .FirstOrDefaultAsync(x => x.Code == normalizedCode);
 
         if (promo is null || !promo.IsActive)
-        {
-            return new PromoCodeValidationResultDto(
-                false,
-                "პრომო კოდი არასწორია ან გამორთულია.",
-                null,
-                0,
-                0);
-        }
+            return InvalidResult("not-found-or-inactive", normalizedCode);
 
         if (promo.ExpiresAtUtc.HasValue && promo.ExpiresAtUtc.Value <= DateTime.UtcNow)
-        {
-            return new PromoCodeValidationResultDto(
-                false,
-                "პრომო კოდის ვადა გასულია.",
-                null,
-                0,
-                0);
-        }
+            return InvalidResult("expired", normalizedCode);
 
         if (promo.MaxUses.HasValue && promo.UsedCount >= promo.MaxUses.Value)
-        {
-            return new PromoCodeValidationResultDto(
-                false,
-                "პრომო კოდის გამოყენების ლიმიტი ამოწურულია.",
-                null,
-                0,
-                0);
-        }
+            return InvalidResult("max-uses-reached", normalizedCode);
 
         if (promo.MaxUsesPerUser.HasValue && !string.IsNullOrEmpty(request.UserId))
         {
@@ -147,14 +126,7 @@ public class PromoCodeService : IPromoCodeService
                               && o.Status != Core.Enums.OrderStatus.Cancelled);
 
             if (userUses >= promo.MaxUsesPerUser.Value)
-            {
-                return new PromoCodeValidationResultDto(
-                    false,
-                    "ამ პრომო კოდის გამოყენების ლიმიტი ამოწურულია.",
-                    null,
-                    0,
-                    0);
-            }
+                return InvalidResult("per-user-limit-reached", normalizedCode);
         }
 
         var discountPercent = ClampPercent(promo.DiscountPercentage);

@@ -72,9 +72,10 @@ public class CreateCustomOrderDesignRequestValidator : AbstractValidator<CreateC
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps)
             return false;
 
-        // If no hosts are configured, fall back to HTTPS-only validation (dev convenience)
+        // Fail closed: require an explicit allowlist. Any environment lacking AzureStorage:AllowedUploadHosts
+        // rejects every design URL — better than silently accepting arbitrary HTTPS resources.
         if (allowedHosts.Length == 0)
-            return true;
+            return false;
 
         return allowedHosts.Any(host =>
             uri.Host.Equals(host, StringComparison.OrdinalIgnoreCase));

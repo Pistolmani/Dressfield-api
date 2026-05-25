@@ -139,14 +139,18 @@ public class BogIPayService : IPaymentService
                 ? t.GetString()
                 : null;
 
-            decimal? verifiedAmount = root.TryGetProperty("purchase_units", out var pu)
-                                      && pu.TryGetProperty("transfer_amount", out var ta)
-                                      && ta.TryGetDecimal(out var amt)
-                ? amt
-                : null;
+            decimal? verifiedAmount = null;
+            string? verifiedCurrency = null;
+            if (root.TryGetProperty("purchase_units", out var pu))
+            {
+                if (pu.TryGetProperty("transfer_amount", out var ta) && ta.TryGetDecimal(out var amt))
+                    verifiedAmount = amt;
+                if (pu.TryGetProperty("currency", out var ccy))
+                    verifiedCurrency = ccy.GetString();
+            }
 
             var approved = string.Equals(statusKey, "completed", StringComparison.OrdinalIgnoreCase);
-            return new PaymentVerificationResult(approved, bogOrderId, txnId, statusKey, verifiedAmount);
+            return new PaymentVerificationResult(approved, bogOrderId, txnId, statusKey, verifiedAmount, verifiedCurrency);
         }
         catch (Exception ex)
         {

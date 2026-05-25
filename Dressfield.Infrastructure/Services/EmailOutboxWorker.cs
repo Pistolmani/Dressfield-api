@@ -80,14 +80,14 @@ public class EmailOutboxWorker : BackgroundService
                 {
                     pending.Status = PendingEmailStatus.Failed;
                     _logger.LogError(ex, "Email {Id} to {To} permanently failed after {Retries} retries.",
-                        pending.Id, pending.ToEmail, pending.RetryCount);
+                        pending.Id, LogSanitizer.MaskEmail(pending.ToEmail), pending.RetryCount);
                 }
                 else
                 {
                     var delayMinutes = RetryDelayMinutes[pending.RetryCount - 1];
                     pending.NextRetryAt = DateTime.UtcNow.AddMinutes(delayMinutes);
                     _logger.LogWarning(ex, "Email {Id} to {To} failed (attempt {Attempt}/{Max}), retry in {Delay} min.",
-                        pending.Id, pending.ToEmail, pending.RetryCount, MaxRetries, delayMinutes);
+                        pending.Id, LogSanitizer.MaskEmail(pending.ToEmail), pending.RetryCount, MaxRetries, delayMinutes);
                 }
             }
         }

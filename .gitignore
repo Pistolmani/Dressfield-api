@@ -18,3 +18,4 @@ appsettings.*.local.json
 appsettings.Production.json
 appsettings.Development.json
 secrets.json
+.claude/

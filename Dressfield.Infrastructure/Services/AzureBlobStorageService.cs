@@ -1,5 +1,6 @@
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
+using Azure.Storage.Sas;
 using Dressfield.Core.Interfaces;
 using Microsoft.Extensions.Configuration;
 using SixLabors.ImageSharp;
@@ -19,6 +20,7 @@ public class AzureBlobStorageService : IStorageService
     private readonly BlobContainerClient _container;
     private readonly string? _publicBaseUrl;
     private readonly Uri? _publicBaseUri;
+    private readonly TimeSpan _sasReadTtl;
 
     public AzureBlobStorageService(IConfiguration configuration)
     {
@@ -32,8 +34,14 @@ public class AzureBlobStorageService : IStorageService
             ? parsedPublicBaseUri
             : null;
 
+        var sasTtlSeconds = configuration.GetValue("AzureStorage:SasReadTtlSeconds", 600);
+        _sasReadTtl = TimeSpan.FromSeconds(Math.Max(60, sasTtlSeconds));
+
         _container = new BlobContainerClient(connectionString, containerName);
-        _container.CreateIfNotExists(PublicAccessType.Blob);
+        // Container is private — every read flows through a short-lived SAS URL generated on demand.
+        // Existing containers must have their public-access policy flipped to None in the portal/CLI;
+        // this call only applies on first creation.
+        _container.CreateIfNotExists(PublicAccessType.None);
     }
 
     public async Task<string> UploadAsync(Stream fileStream, string fileName, string contentType)
@@ -92,6 +100,28 @@ public class AzureBlobStorageService : IStorageService
             if (shouldDispose)
                 await uploadStream.DisposeAsync();
         }
+    }
+
+    public string GetSignedReadUrl(string storedUrl)
+    {
+        if (string.IsNullOrWhiteSpace(storedUrl))
+            return storedUrl;
+
+        var blobName = TryExtractBlobName(storedUrl);
+        if (string.IsNullOrWhiteSpace(blobName))
+            return storedUrl;
+
+        var blobClient = _container.GetBlobClient(blobName);
+        if (!blobClient.CanGenerateSasUri)
+            return storedUrl;
+
+        var sasBuilder = new BlobSasBuilder(BlobSasPermissions.Read, DateTimeOffset.UtcNow.Add(_sasReadTtl))
+        {
+            BlobContainerName = _container.Name,
+            BlobName = blobName,
+            Resource = "b",
+        };
+        return blobClient.GenerateSasUri(sasBuilder).ToString();
     }
 
     public async Task DeleteAsync(string fileUrl)

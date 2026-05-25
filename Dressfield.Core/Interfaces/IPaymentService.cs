@@ -25,4 +25,5 @@ public record PaymentVerificationResult(
     string BogOrderId,
     string? TransactionId,
     string Status,
-    decimal? VerifiedAmount = null);
+    decimal? VerifiedAmount = null,
+    string? Currency = null);
