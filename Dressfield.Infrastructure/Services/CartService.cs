@@ -53,7 +53,7 @@ public class CartService : ICartService
                     continue;
             }
 
-            var discountedBasePrice = CalculateDiscountedBasePrice(product.BasePrice, product.SalePercentage);
+            var discountedBasePrice = PricingHelper.CalculateDiscountedPrice(product.BasePrice, product.SalePercentage);
             var price = discountedBasePrice + (variant?.PriceAdjustment ?? 0m);
             var variantLabel = variant is null ? null : $"{variant.Name}: {variant.Value}";
             var imageUrl = product.Images.OrderBy(i => i.SortOrder).FirstOrDefault()?.ImageUrl;
@@ -156,15 +156,4 @@ public class CartService : ICartService
         await _db.SaveChangesAsync();
     }
 
-    private static decimal NormalizePercent(decimal value) =>
-        Math.Clamp(value, 0m, 100m);
-
-    private static decimal RoundMoney(decimal value) =>
-        decimal.Round(value, 2, MidpointRounding.AwayFromZero);
-
-    private static decimal CalculateDiscountedBasePrice(decimal basePrice, decimal salePercentage)
-    {
-        var percent = NormalizePercent(salePercentage);
-        return RoundMoney(basePrice * (1m - percent / 100m));
-    }
 }

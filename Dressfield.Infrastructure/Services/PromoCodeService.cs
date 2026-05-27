@@ -129,8 +129,8 @@ public class PromoCodeService : IPromoCodeService
                 return InvalidResult("per-user-limit-reached", normalizedCode);
         }
 
-        var discountPercent = ClampPercent(promo.DiscountPercentage);
-        var discountAmount = RoundMoney(request.Subtotal * discountPercent / 100m);
+        var discountPercent = PricingHelper.NormalizePercent(promo.DiscountPercentage);
+        var discountAmount = PricingHelper.RoundMoney(request.Subtotal * discountPercent / 100m);
 
         return new PromoCodeValidationResultDto(
             true,
@@ -139,11 +139,6 @@ public class PromoCodeService : IPromoCodeService
             discountPercent,
             discountAmount);
     }
-
-    private static decimal ClampPercent(decimal value) => Math.Clamp(value, 0m, 100m);
-
-    private static decimal RoundMoney(decimal value) =>
-        decimal.Round(value, 2, MidpointRounding.AwayFromZero);
 
     private static string NormalizeCode(string code) =>
         (code ?? string.Empty).Trim().ToUpperInvariant();

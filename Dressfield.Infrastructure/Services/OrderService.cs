@@ -194,7 +194,7 @@ public class OrderService : IOrderService
                 stockReservations.Add((variant.Id, cartItem.Quantity, product.Name));
             }
 
-            var discountedBasePrice = CalculateDiscountedProductPrice(product.BasePrice, product.SalePercentage);
+            var discountedBasePrice = PricingHelper.CalculateDiscountedPrice(product.BasePrice, product.SalePercentage);
             var unitPrice = discountedBasePrice + (variant?.PriceAdjustment ?? 0);
             var lineTotal = unitPrice * cartItem.Quantity;
             subtotal += lineTotal;
@@ -241,8 +241,8 @@ public class OrderService : IOrderService
             }
 
             promoCodeId = promoCode.Id;
-            promoDiscountPercentage = NormalizePercent(promoCode.DiscountPercentage);
-            promoDiscountAmount = RoundMoney(subtotal * promoDiscountPercentage.Value / 100m);
+            promoDiscountPercentage = PricingHelper.NormalizePercent(promoCode.DiscountPercentage);
+            promoDiscountAmount = PricingHelper.RoundMoney(subtotal * promoDiscountPercentage.Value / 100m);
         }
 
         var discountedSubtotal = Math.Max(0m, subtotal - promoDiscountAmount);
@@ -644,17 +644,11 @@ public class OrderService : IOrderService
             HtmlBody = html,
         });
     }
-    private static decimal NormalizePercent(decimal value) =>
-        Math.Clamp(value, 0m, 100m);
-
     private static string? NormalizePromoCode(string? promoCode)
     {
         var normalized = promoCode?.Trim().ToUpperInvariant();
         return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
     }
-
-    private static decimal RoundMoney(decimal value) =>
-        decimal.Round(value, 2, MidpointRounding.AwayFromZero);
 
     private string BuildBogRedirectUrl(string bogOrderId)
     {
@@ -668,12 +662,6 @@ public class OrderService : IOrderService
         }
 
         return $"{trimmedBaseUrl.TrimEnd('/')}/?order_id={escapedOrderId}";
-    }
-
-    private static decimal CalculateDiscountedProductPrice(decimal basePrice, decimal salePercentage)
-    {
-        var percent = NormalizePercent(salePercentage);
-        return RoundMoney(basePrice * (1m - percent / 100m));
     }
 
     internal static string BuildMismatchReason(
