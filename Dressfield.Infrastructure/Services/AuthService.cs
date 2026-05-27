@@ -5,7 +5,6 @@ using System.Text;
 using Dressfield.Application.DTOs;
 using Dressfield.Application.Interfaces;
 using Dressfield.Core.Entities;
-using Dressfield.Core.Interfaces;
 using Dressfield.Infrastructure.Data;
 using Google.Apis.Auth;
 using Microsoft.AspNetCore.Identity;
@@ -22,7 +21,6 @@ public class AuthService : IAuthService
     private readonly UserManager<ApplicationUser> _userManager;
     private readonly DressfieldDbContext _db;
     private readonly IConfiguration _config;
-    private readonly IEmailService _emailService;
     private readonly ILogger<AuthService> _logger;
     private readonly byte[] _refreshTokenPepper;
 
@@ -30,14 +28,12 @@ public class AuthService : IAuthService
         UserManager<ApplicationUser> userManager,
         DressfieldDbContext db,
         IConfiguration config,
-        IEmailService emailService,
         ILogger<AuthService> logger,
         IHostEnvironment env)
     {
         _userManager = userManager;
         _db = db;
         _config = config;
-        _emailService = emailService;
         _logger = logger;
 
         var pepper = config["Jwt:RefreshTokenPepper"];
@@ -135,14 +131,9 @@ public class AuthService : IAuthService
 
     public async Task LogoutAsync(string userId)
     {
-        var tokens = await _db.RefreshTokens
+        await _db.RefreshTokens
             .Where(r => r.UserId == userId && !r.IsRevoked)
-            .ToListAsync();
-
-        foreach (var token in tokens)
-            token.IsRevoked = true;
-
-        await _db.SaveChangesAsync();
+            .ExecuteUpdateAsync(s => s.SetProperty(r => r.IsRevoked, true));
     }
 
     public async Task ForgotPasswordAsync(string email, string resetBaseUrl)
@@ -154,7 +145,8 @@ public class AuthService : IAuthService
         // Fragment-encoded so the reset token never reaches the server in Referer headers,
         // proxy access logs, or analytics that parse the query string.
         var resetLink = $"{resetBaseUrl}#email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(token)}";
-        await _emailService.SendPasswordResetEmailAsync(email, resetLink);
+        QueuePasswordResetEmail(email, resetLink);
+        await _db.SaveChangesAsync();
     }
 
     public async Task ResetPasswordAsync(ResetPasswordRequest request)
@@ -297,7 +289,7 @@ public class AuthService : IAuthService
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_config["Jwt:Secret"]!));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var expiry = DateTime.UtcNow.AddMinutes(int.Parse(_config["Jwt:AccessTokenExpirationMinutes"] ?? "15"));
+        var expiry = DateTime.UtcNow.AddMinutes(_config.GetValue("Jwt:AccessTokenExpirationMinutes", 15));
 
         var token = new JwtSecurityToken(
             issuer: _config["Jwt:Issuer"],
@@ -317,7 +309,7 @@ public class AuthService : IAuthService
         {
             Token = ComputeRefreshTokenHash(rawToken),
             UserId = userId,
-            ExpiresAt = DateTime.UtcNow.AddDays(int.Parse(_config["Jwt:RefreshTokenExpirationDays"] ?? "7"))
+            ExpiresAt = DateTime.UtcNow.AddDays(_config.GetValue("Jwt:RefreshTokenExpirationDays", 7))
         });
 
         await _db.SaveChangesAsync();
@@ -334,6 +326,27 @@ public class AuthService : IAuthService
     {
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
         return Convert.ToBase64String(bytes);
+    }
+
+    private void QueuePasswordResetEmail(string to, string resetLink)
+    {
+        var safeLink = System.Net.WebUtility.HtmlEncode(resetLink);
+
+        var html = $"""
+            <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:24px;">
+                <h2>პაროლის აღდგენა — DressField</h2>
+                <p>თქვენი პაროლის აღსადგენად გამოიყენეთ ქვემოთ მოცემული ბმული:</p>
+                <p><a href="{safeLink}" style="display:inline-block;background:#000;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;">პაროლის აღდგენა</a></p>
+                <p style="color:#888;font-size:13px;">ბმული მოქმედებს 1 საათის განმავლობაში.</p>
+            </div>
+            """;
+
+        _db.PendingEmails.Add(new PendingEmail
+        {
+            ToEmail = to,
+            Subject = "პაროლის აღდგენა — DressField",
+            HtmlBody = html,
+        });
     }
 
     private void QueueWelcomeEmail(string to, string firstName)
