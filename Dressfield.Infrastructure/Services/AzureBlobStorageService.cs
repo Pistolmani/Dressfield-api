@@ -21,6 +21,7 @@ public class AzureBlobStorageService : IStorageService
     private readonly string? _publicBaseUrl;
     private readonly Uri? _publicBaseUri;
     private readonly TimeSpan _sasReadTtl;
+    private readonly Lazy<Task> _ensureCreated;
 
     public AzureBlobStorageService(IConfiguration configuration)
     {
@@ -38,14 +39,17 @@ public class AzureBlobStorageService : IStorageService
         _sasReadTtl = TimeSpan.FromSeconds(Math.Max(60, sasTtlSeconds));
 
         _container = new BlobContainerClient(connectionString, containerName);
-        // Container is private — every read flows through a short-lived SAS URL generated on demand.
-        // Existing containers must have their public-access policy flipped to None in the portal/CLI;
-        // this call only applies on first creation.
-        _container.CreateIfNotExists(PublicAccessType.None);
+        // Lazy-init: container creation runs asynchronously on first use instead of blocking
+        // the DI thread during startup. Container is private — existing containers must have their
+        // public-access policy flipped to None in the portal/CLI; this call only applies on first creation.
+        _ensureCreated = new Lazy<Task>(() =>
+            _container.CreateIfNotExistsAsync(PublicAccessType.None));
     }
 
     public async Task<string> UploadAsync(Stream fileStream, string fileName, string contentType)
     {
+        await _ensureCreated.Value;
+
         string uploadContentType = contentType;
         string extension         = Path.GetExtension(fileName).ToLowerInvariant();
 
