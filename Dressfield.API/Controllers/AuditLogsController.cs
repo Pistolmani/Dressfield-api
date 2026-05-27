@@ -24,6 +24,8 @@ public class AuditLogsController : ControllerBase
         [FromQuery] string? entityType = null,
         [FromQuery] string? action = null)
     {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 200);
         var result = await _auditLog.GetAsync(page, pageSize, entityType, action);
         return Ok(result);
     }
