@@ -76,8 +76,8 @@ public class AbandonedOrderReaper : BackgroundService
         var pendingCutoff              = now - _pendingTimeout;
         var paymentProcessingCutoff    = now - _paymentProcessingTimeout;
 
-        await CancelStalePendingOrdersAsync(db, pendingCutoff, ct);
-        await CancelStalePendingCustomOrdersAsync(db, pendingCutoff, ct);
+        await CancelStalePendingOrdersAsync(db, payment, pendingCutoff, ct);
+        await CancelStalePendingCustomOrdersAsync(db, payment, pendingCutoff, ct);
         // Reset before CancelAbandoned so the same cycle can pick up and resolve the recovered orders
         await ResetStuckPaymentProcessingOrdersAsync(db, paymentProcessingCutoff, ct);
         await ResetStuckPaymentProcessingCustomOrdersAsync(db, paymentProcessingCutoff, ct);
@@ -141,15 +141,54 @@ public class AbandonedOrderReaper : BackgroundService
     /// was never created (or the process crashed before saving <c>BogOrderId</c>).
     /// These have no payment session so stock would be reserved indefinitely without this cleanup.
     /// </summary>
-    private async Task CancelStalePendingOrdersAsync(DressfieldDbContext db, DateTime cutoff, CancellationToken ct)
+    private async Task CancelStalePendingOrdersAsync(DressfieldDbContext db, IPaymentService payment, DateTime cutoff, CancellationToken ct)
     {
-        var staleIds = await db.Orders
+        var staleOrders = await db.Orders
             .Where(o => o.Status == OrderStatus.Pending && o.CreatedAt < cutoff)
-            .Select(o => o.Id)
+            .Select(o => new { o.Id, o.BogOrderKey })
             .ToListAsync(ct);
 
-        foreach (var id in staleIds)
+        foreach (var stale in staleOrders)
         {
+            var id = stale.Id;
+
+            // If we have a BogOrderKey the order reached CreateSessionAsync. Check BOG to
+            // avoid cancelling an order the customer already paid (race from Bug 2).
+            if (!string.IsNullOrWhiteSpace(stale.BogOrderKey))
+            {
+                var lookup = await payment.LookupByExternalOrderIdAsync(stale.BogOrderKey);
+
+                if (lookup is not null)
+                {
+                    if (lookup.IsTransientFailure)
+                    {
+                        _logger.LogWarning(
+                            "Skipping stale Pending order {OrderId} cancellation — BOG lookup unreachable for key={Key}",
+                            id, stale.BogOrderKey);
+                        continue;
+                    }
+
+                    // BOG has a session for this order — hydrate and let the normal flow resolve it.
+                    var hydrated = await db.Orders
+                        .Where(o => o.Id == id && o.Status == OrderStatus.Pending)
+                        .ExecuteUpdateAsync(
+                            s => s.SetProperty(o => o.BogOrderId, lookup.BogOrderId)
+                                  .SetProperty(o => o.Status, OrderStatus.AwaitingPayment)
+                                  .SetProperty(o => o.UpdatedAt, DateTime.UtcNow),
+                            ct);
+
+                    if (hydrated > 0)
+                    {
+                        _logger.LogWarning(
+                            "Recovered stale Pending order {OrderId}: hydrated BogOrderId={BogOrderId} → AwaitingPayment. " +
+                            "Will be resolved by next reaper cycle.",
+                            id, lookup.BogOrderId);
+                    }
+                    continue;
+                }
+                // null → BOG has no record for this key, order never reached BOG. Cancel normally.
+            }
+
             var claimed = await db.Orders
                 .Where(o => o.Id == id && o.Status == OrderStatus.Pending)
                 .ExecuteUpdateAsync(
@@ -202,15 +241,50 @@ public class AbandonedOrderReaper : BackgroundService
     /// Cancels custom orders stuck in <see cref="CustomOrderStatus.Pending"/> for the same reason.
     /// Custom orders have no stock to restore but still need to be cleaned up.
     /// </summary>
-    private async Task CancelStalePendingCustomOrdersAsync(DressfieldDbContext db, DateTime cutoff, CancellationToken ct)
+    private async Task CancelStalePendingCustomOrdersAsync(DressfieldDbContext db, IPaymentService payment, DateTime cutoff, CancellationToken ct)
     {
-        var staleIds = await db.CustomOrders
+        var staleOrders = await db.CustomOrders
             .Where(o => o.Status == CustomOrderStatus.Pending && o.CreatedAt < cutoff)
-            .Select(o => o.Id)
+            .Select(o => new { o.Id, o.BogOrderKey })
             .ToListAsync(ct);
 
-        foreach (var id in staleIds)
+        foreach (var stale in staleOrders)
         {
+            var id = stale.Id;
+
+            // Same BOG lookup guard as regular orders — avoid cancelling if customer already paid.
+            if (!string.IsNullOrWhiteSpace(stale.BogOrderKey))
+            {
+                var lookup = await payment.LookupByExternalOrderIdAsync(stale.BogOrderKey);
+
+                if (lookup is not null)
+                {
+                    if (lookup.IsTransientFailure)
+                    {
+                        _logger.LogWarning(
+                            "Skipping stale Pending custom order {OrderId} cancellation — BOG lookup unreachable for key={Key}",
+                            id, stale.BogOrderKey);
+                        continue;
+                    }
+
+                    var hydrated = await db.CustomOrders
+                        .Where(o => o.Id == id && o.Status == CustomOrderStatus.Pending)
+                        .ExecuteUpdateAsync(
+                            s => s.SetProperty(o => o.BogOrderId, lookup.BogOrderId)
+                                  .SetProperty(o => o.Status, CustomOrderStatus.AwaitingPayment)
+                                  .SetProperty(o => o.UpdatedAt, DateTime.UtcNow),
+                            ct);
+
+                    if (hydrated > 0)
+                    {
+                        _logger.LogWarning(
+                            "Recovered stale Pending custom order {OrderId}: hydrated BogOrderId={BogOrderId} → AwaitingPayment.",
+                            id, lookup.BogOrderId);
+                    }
+                    continue;
+                }
+            }
+
             var claimed = await db.CustomOrders
                 .Where(o => o.Id == id && o.Status == CustomOrderStatus.Pending)
                 .ExecuteUpdateAsync(
