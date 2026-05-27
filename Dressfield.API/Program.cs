@@ -79,8 +79,12 @@ if (string.IsNullOrWhiteSpace(jwtSecret) || jwtSecret.Length < 32)
         "Set it via Azure environment variable Jwt__Secret. " +
         "For local dev, add it to appsettings.Development.json.");
 
-var jwtIssuer   = builder.Configuration["Jwt:Issuer"]!;
-var jwtAudience = builder.Configuration["Jwt:Audience"]!;
+var jwtIssuer = builder.Configuration["Jwt:Issuer"]
+    ?? throw new InvalidOperationException(
+        "Jwt:Issuer is not configured. Set it via Azure environment variable Jwt__Issuer.");
+var jwtAudience = builder.Configuration["Jwt:Audience"]
+    ?? throw new InvalidOperationException(
+        "Jwt:Audience is not configured. Set it via Azure environment variable Jwt__Audience.");
 
 builder.Services.AddAuthentication(options =>
     {
@@ -454,10 +458,6 @@ try
 catch (Exception ex) when (IsDatabaseUnavailable(ex))
 {
     Log.Warning(ex, "Database unavailable during startup. Continuing without migration/seed.");
-}
-catch
-{
-    throw;
 }
 
 app.Run();
