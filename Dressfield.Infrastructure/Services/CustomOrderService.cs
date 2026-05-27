@@ -5,6 +5,7 @@ using Dressfield.Core.Enums;
 using Dressfield.Core.Interfaces;
 using Dressfield.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Dressfield.Infrastructure.Services;
@@ -15,8 +16,10 @@ public class CustomOrderService : ICustomOrderService
     private readonly IPaymentService _payment;
     private readonly IStorageService _storage;
     private readonly ILogger<CustomOrderService> _logger;
+    private readonly IReadOnlyDictionary<string, decimal> _embroiderySizeExtraPrices;
 
-    private static readonly IReadOnlyDictionary<string, decimal> EmbroiderySizeExtraPrices =
+    /// <summary>Default embroidery prices, used when <c>CustomOrders:EmbroiderySizePrices</c> is not configured.</summary>
+    private static readonly IReadOnlyDictionary<string, decimal> DefaultEmbroiderySizeExtraPrices =
         new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase)
         {
             ["S"] = 0m,
@@ -29,12 +32,19 @@ public class CustomOrderService : ICustomOrderService
         DressfieldDbContext db,
         IPaymentService payment,
         IStorageService storage,
-        ILogger<CustomOrderService> logger)
+        ILogger<CustomOrderService> logger,
+        IConfiguration configuration)
     {
         _db = db;
         _payment = payment;
         _storage = storage;
         _logger = logger;
+
+        var configuredPrices = configuration.GetSection("CustomOrders:EmbroiderySizePrices")
+            .Get<Dictionary<string, decimal>>();
+        _embroiderySizeExtraPrices = configuredPrices is { Count: > 0 }
+            ? new Dictionary<string, decimal>(configuredPrices, StringComparer.OrdinalIgnoreCase)
+            : DefaultEmbroiderySizeExtraPrices;
     }
 
     public async Task<IReadOnlyCollection<CustomOrderSummaryDto>> GetAdminAsync(CustomOrderStatus? status)
@@ -316,21 +326,90 @@ public class CustomOrderService : ICustomOrderService
             o.TotalPrice,
             o.CreatedAt);
 
-    private static decimal CalculateEmbroideryExtra(IReadOnlyCollection<CreateCustomOrderDesignRequest> designs) =>
+    private decimal CalculateEmbroideryExtra(IReadOnlyCollection<CreateCustomOrderDesignRequest> designs) =>
         designs
             .Select(d => ResolveEmbroideryExtra(d.Size))
             .DefaultIfEmpty(0m)
             .Max();
 
-    private static decimal ResolveEmbroideryExtra(string? size)
+    private decimal ResolveEmbroideryExtra(string? size)
     {
         if (string.IsNullOrWhiteSpace(size))
             return 0m;
 
         var normalized = size.Trim().ToUpperInvariant();
-        return EmbroiderySizeExtraPrices.TryGetValue(normalized, out var extraPrice)
+        return _embroiderySizeExtraPrices.TryGetValue(normalized, out var extraPrice)
             ? extraPrice
             : 0m;
+    }
+
+    /// <summary>
+    /// Persists the BOG session details for a custom order after successful session creation,
+    /// with retries to guard against transient DB failures.
+    /// Mirrors <see cref="OrderService.SaveBogSessionWithRetryAsync"/>.
+    /// </summary>
+    private async Task SaveBogSessionWithRetryAsync(
+        int orderId, string bogOrderId, string bogOrderKey, decimal totalPrice, string? redirectUrl)
+    {
+        int[] retryDelaysMs = [200, 1000, 5000];
+
+        for (var attempt = 0; attempt < retryDelaysMs.Length + 1; attempt++)
+        {
+            try
+            {
+                await _db.CustomOrders
+                    .Where(o => o.Id == orderId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(o => o.BogOrderId, bogOrderId)
+                        .SetProperty(o => o.Status, CustomOrderStatus.AwaitingPayment)
+                        .SetProperty(o => o.UpdatedAt, DateTime.UtcNow));
+                return;
+            }
+            catch (Exception ex) when (attempt < retryDelaysMs.Length)
+            {
+                _logger.LogWarning(ex,
+                    "Transient DB failure saving BOG session for custom order {OrderId} (attempt {Attempt}/{Max}). Retrying in {Delay}ms.",
+                    orderId, attempt + 1, retryDelaysMs.Length + 1, retryDelaysMs[attempt]);
+                await Task.Delay(retryDelaysMs[attempt]);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogCritical(ex,
+                    "CRITICAL: Failed to persist BOG session for custom order {OrderId} after {Max} attempts. " +
+                    "BogOrderKey={BogOrderKey} BogOrderId={BogOrderId} Amount=₾{Amount} RedirectUrl={RedirectUrl}. " +
+                    "The customer has a valid payment link and may complete payment. " +
+                    "Do NOT cancel this order manually. The reaper will reconcile via LookupByExternalOrderIdAsync.",
+                    orderId, retryDelaysMs.Length + 1, bogOrderKey, bogOrderId, totalPrice, redirectUrl);
+                return;
+            }
+        }
+    }
+
+    private void QueueConfirmationEmail(string to, int orderId, decimal total)
+    {
+        var html = $"""
+            <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:24px;color:#333;">
+                <h2 style="margin-bottom:4px;">გადახდა მიღებულია!</h2>
+                <p style="color:#888;margin-top:0;">ინდივიდუალური შეკვეთის ნომერი: <strong>#{orderId}</strong></p>
+
+                <p style="font-size:16px;font-weight:600;text-align:right;margin:16px 0;">სულ: ₾{total:F2}</p>
+
+                <div style="background:#f9f9f9;border-radius:8px;padding:16px;margin:16px 0;">
+                    <p style="margin:0 0 4px;font-size:14px;font-weight:600;">რა ხდება შემდეგ?</p>
+                    <p style="margin:0;font-size:13px;color:#666;">ჩვენი გუნდი გადახედავს თქვენს დიზაინს. დადასტურების შემდეგ დავიწყებთ ნაქარგობის წარმოებას და გამოგზავნისას მიიღებთ შეტყობინებას.</p>
+                </div>
+
+                <hr style="border:none;border-top:1px solid #eee;margin:20px 0;" />
+                <p style="color:#888;font-size:13px;margin:0;">გმადლობთ, რომ აირჩიეთ DressField!</p>
+            </div>
+            """;
+
+        _db.PendingEmails.Add(new PendingEmail
+        {
+            ToEmail = to,
+            Subject = $"ინდივიდუალური შეკვეთა #{orderId} მიღებულია — DressField",
+            HtmlBody = html,
+        });
     }
 
 }
