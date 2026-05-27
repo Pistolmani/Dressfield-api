@@ -277,6 +277,9 @@ public class CustomOrderService : ICustomOrderService
             Notes = $"BOG callback: {(result.IsApproved ? "approved" : "declined")} (txn: {result.TransactionId})",
         });
 
+        if (result.IsApproved && !string.IsNullOrEmpty(order.ContactEmail))
+            QueueConfirmationEmail(order.ContactEmail, order.Id, order.TotalPrice);
+
         await _db.SaveChangesAsync();
 
         _logger.LogInformation("Custom order {OrderId} payment {Result} (BOG: {BogOrderId})",
