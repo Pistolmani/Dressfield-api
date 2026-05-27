@@ -12,6 +12,16 @@ public interface IPaymentService
     /// Verifies a payment callback from BOG and returns the result.
     /// </summary>
     Task<PaymentVerificationResult> VerifyCallbackAsync(string bogOrderId);
+
+    /// <summary>
+    /// Looks up a BOG payment session using the external_order_id we assigned when creating it
+    /// (i.e. the order's <c>BogOrderKey</c> / <c>orderKey</c> string).
+    /// Returns <c>null</c> when BOG has no record for that key (order never reached BOG).
+    /// Returns a result with <see cref="PaymentVerificationResult.IsTransientFailure"/> = true
+    /// when the lookup endpoint is unreachable or not configured — callers must skip cancellation
+    /// and retry on the next cycle.
+    /// </summary>
+    Task<PaymentVerificationResult?> LookupByExternalOrderIdAsync(string externalOrderId);
 }
 
 public record PaymentSessionResult(
