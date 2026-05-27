@@ -86,6 +86,17 @@ var jwtAudience = builder.Configuration["Jwt:Audience"]
     ?? throw new InvalidOperationException(
         "Jwt:Audience is not configured. Set it via Azure environment variable Jwt__Audience.");
 
+// Refresh-token pepper must be present outside Development. Validated at startup so
+// the app fails loudly at boot rather than 400ing every /api/auth/* request per-instance.
+if (!builder.Environment.IsDevelopment())
+{
+    var pepper = builder.Configuration["Jwt:RefreshTokenPepper"];
+    if (string.IsNullOrWhiteSpace(pepper) || pepper.Length < 32)
+        throw new InvalidOperationException(
+            "Jwt:RefreshTokenPepper is missing or too short (min 32 chars). " +
+            "Set it via Azure environment variable Jwt__RefreshTokenPepper.");
+}
+
 builder.Services.AddAuthentication(options =>
     {
         options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;

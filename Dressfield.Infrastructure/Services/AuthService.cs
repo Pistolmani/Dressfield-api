@@ -10,7 +10,6 @@ using Google.Apis.Auth;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.IdentityModel.Tokens;
 
@@ -28,24 +27,18 @@ public class AuthService : IAuthService
         UserManager<ApplicationUser> userManager,
         DressfieldDbContext db,
         IConfiguration config,
-        ILogger<AuthService> logger,
-        IHostEnvironment env)
+        ILogger<AuthService> logger)
     {
         _userManager = userManager;
         _db = db;
         _config = config;
         _logger = logger;
 
+        // Production presence/length is enforced at startup in Program.cs; here we only
+        // provide a Development fallback so local dev doesn't need the env var set.
         var pepper = config["Jwt:RefreshTokenPepper"];
         if (string.IsNullOrWhiteSpace(pepper))
-        {
-            if (!env.IsDevelopment())
-                throw new InvalidOperationException(
-                    "Jwt:RefreshTokenPepper must be configured outside Development. " +
-                    "Set a 32+ byte random secret via Azure environment variable Jwt__RefreshTokenPepper.");
-            // Dev convenience: derive a stable per-process pepper from the JWT secret.
             pepper = config["Jwt:Secret"] ?? "dev-refresh-token-pepper";
-        }
         _refreshTokenPepper = Encoding.UTF8.GetBytes(pepper);
     }
 
