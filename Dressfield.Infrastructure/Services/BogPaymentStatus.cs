@@ -9,12 +9,12 @@ internal static class BogPaymentStatus
     /// <summary>
     /// Returns true when the BOG status is non-terminal — i.e. the payment
     /// is still in progress and the order should NOT be cancelled yet.
+    /// Local transient failures (HTTP errors, exceptions) are signalled via
+    /// PaymentVerificationResult.IsTransientFailure, not this method.
     /// </summary>
     public static bool IsPending(string status) =>
-        status.Equals("created",       StringComparison.OrdinalIgnoreCase)
+        status.Equals("created",          StringComparison.OrdinalIgnoreCase)
         || status.Equals("processing",    StringComparison.OrdinalIgnoreCase)
         || status.Equals("auth_requested",StringComparison.OrdinalIgnoreCase)
-        || status.Equals("blocked",       StringComparison.OrdinalIgnoreCase)
-        || status.Equals("error",         StringComparison.OrdinalIgnoreCase)
-        || status.Equals("exception",     StringComparison.OrdinalIgnoreCase);
+        || status.Equals("blocked",       StringComparison.OrdinalIgnoreCase);
 }

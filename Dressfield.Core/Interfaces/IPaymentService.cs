@@ -26,4 +26,5 @@ public record PaymentVerificationResult(
     string? TransactionId,
     string Status,
     decimal? VerifiedAmount = null,
-    string? Currency = null);
+    string? Currency = null,
+    bool IsTransientFailure = false);
