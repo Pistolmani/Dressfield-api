@@ -62,7 +62,7 @@ public class OrderService : IOrderService
         return order is null ? null : MapDetail(order);
     }
 
-    public async Task UpdateStatusAsync(int id, UpdateOrderStatusRequest request)
+    public async Task UpdateStatusAsync(int id, UpdateOrderStatusRequest request, string? changedByUserId = null)
     {
         var order = await _db.Orders
             .Include(o => o.Items)
@@ -85,7 +85,7 @@ public class OrderService : IOrderService
             OrderId = order.Id,
             FromStatus = previousStatus,
             ToStatus = request.Status,
-            ChangedByUserId = request.ChangedByUserId,
+            ChangedByUserId = changedByUserId,
             Notes = request.AdminNotes?.Trim(),
         });
 

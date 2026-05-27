@@ -8,7 +8,7 @@ public interface IOrderService
     // Admin
     Task<IReadOnlyCollection<OrderSummaryDto>> GetAdminAsync(OrderStatus? status);
     Task<OrderDetailDto?> GetAdminByIdAsync(int id);
-    Task UpdateStatusAsync(int id, UpdateOrderStatusRequest request);
+    Task UpdateStatusAsync(int id, UpdateOrderStatusRequest request, string? changedByUserId = null);
 
     // Customer
     Task<IReadOnlyCollection<OrderSummaryDto>> GetByUserAsync(string userId);

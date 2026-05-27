@@ -119,7 +119,7 @@ public class OrdersController : ControllerBase
         try
         {
             var adminUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-            await _orders.UpdateStatusAsync(id, request with { ChangedByUserId = adminUserId });
+            await _orders.UpdateStatusAsync(id, request, adminUserId);
             await _auditLog.LogAsync("OrderStatusChanged", "Order",
                 entityId: id.ToString(),
                 entityName: $"Order #{id}",

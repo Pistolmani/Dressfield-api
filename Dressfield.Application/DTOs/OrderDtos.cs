@@ -79,8 +79,7 @@ public record UpdateOrderStatusRequest(
     OrderStatus Status,
     string? AdminNotes,
     string? TrackingNumber = null,
-    string? TrackingUrl = null,
-    string? ChangedByUserId = null);
+    string? TrackingUrl = null);
 
 public record CheckoutResponse(
     int OrderId,
