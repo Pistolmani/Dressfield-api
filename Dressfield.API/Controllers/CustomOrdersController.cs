@@ -26,9 +26,20 @@ public class CustomOrdersController : ControllerBase
     [EnableRateLimiting("orders")]
     public async Task<ActionResult<CustomOrderCheckoutResponse>> Create([FromBody] CreateCustomOrderRequest request)
     {
-        var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var response = await _customOrderService.CreateAsync(request, userId);
-        return Ok(response);
+        try
+        {
+            var userId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            var response = await _customOrderService.CreateAsync(request, userId);
+            return Ok(response);
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
     }
 
     /// <summary>Get the logged-in customer's own orders.</summary>
@@ -71,13 +82,20 @@ public class CustomOrdersController : ControllerBase
     [HttpPut("admin/{id:int}/status")]
     public async Task<IActionResult> UpdateStatus(int id, [FromBody] UpdateCustomOrderStatusRequest request)
     {
-        await _customOrderService.UpdateStatusAsync(id, request);
-        await _auditLog.LogAsync("CustomOrderStatusChanged", "CustomOrder",
-            entityId: id.ToString(),
-            entityName: $"Custom Order #{id}",
-            actorId: User.FindFirstValue(ClaimTypes.NameIdentifier),
-            actorEmail: User.FindFirstValue(ClaimTypes.Email),
-            details: $"Status → {request.Status}{(string.IsNullOrWhiteSpace(request.AdminNotes) ? "" : $"; Notes: {request.AdminNotes}")}");
-        return NoContent();
+        try
+        {
+            await _customOrderService.UpdateStatusAsync(id, request);
+            await _auditLog.LogAsync("CustomOrderStatusChanged", "CustomOrder",
+                entityId: id.ToString(),
+                entityName: $"Custom Order #{id}",
+                actorId: User.FindFirstValue(ClaimTypes.NameIdentifier),
+                actorEmail: User.FindFirstValue(ClaimTypes.Email),
+                details: $"Status → {request.Status}{(string.IsNullOrWhiteSpace(request.AdminNotes) ? "" : $"; Notes: {request.AdminNotes}")}");
+            return NoContent();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
     }
 }
