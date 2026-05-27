@@ -218,17 +218,10 @@ if (clamEnabled)
 }
 else
 {
-    if (builder.Environment.IsProduction())
-    {
-        throw new InvalidOperationException(
-            "ClamAV must be enabled in Production. " +
-            "Set Security:ClamAv:Enabled=true (and Security:ClamAv:Host) via Azure App Service environment variables.");
-    }
-
     builder.Services.AddScoped<IFileSecurityScanner, NoOpFileSecurityScanner>();
     if (!builder.Environment.IsDevelopment())
     {
-        Log.Warning("ClamAV scanning is disabled. Required in Production; allowed in {Env} only as a transitional fallback.",
+        Log.Warning("ClamAV scanning is disabled. Enable it via Security:ClamAv:Enabled=true for production file scanning.",
             builder.Environment.EnvironmentName);
     }
 }
