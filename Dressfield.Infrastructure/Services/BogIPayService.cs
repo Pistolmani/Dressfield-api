@@ -123,7 +123,7 @@ public class BogIPayService : IPaymentService
             if (!res.IsSuccessStatusCode)
             {
                 _logger.LogWarning("BOG verify-order failed {Status} for {BogOrderId}", res.StatusCode, bogOrderId);
-                return new PaymentVerificationResult(false, bogOrderId, null, "error");
+                return new PaymentVerificationResult(false, bogOrderId, null, "error", IsTransientFailure: true);
             }
 
             using var doc = JsonDocument.Parse(raw);
