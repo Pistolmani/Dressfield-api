@@ -261,6 +261,15 @@ public class AbandonedOrderReaper : BackgroundService
             if (!string.IsNullOrWhiteSpace(paymentState.BogOrderId))
             {
                 var verification = await payment.VerifyCallbackAsync(paymentState.BogOrderId);
+
+                if (verification.IsTransientFailure)
+                {
+                    _logger.LogWarning(
+                        "Skipping abandoned cancellation for order {OrderId}; BOG verification temporarily unreachable (BOG: {BogOrderId})",
+                        id, paymentState.BogOrderId);
+                    continue;
+                }
+
                 if (verification.IsApproved)
                 {
                     await orders.HandlePaymentCallbackAsync(paymentState.BogOrderId, paymentState.BogOrderKey);
@@ -351,6 +360,15 @@ public class AbandonedOrderReaper : BackgroundService
             if (!string.IsNullOrWhiteSpace(paymentState.BogOrderId))
             {
                 var verification = await payment.VerifyCallbackAsync(paymentState.BogOrderId);
+
+                if (verification.IsTransientFailure)
+                {
+                    _logger.LogWarning(
+                        "Skipping abandoned cancellation for custom order {OrderId}; BOG verification temporarily unreachable (BOG: {BogOrderId})",
+                        id, paymentState.BogOrderId);
+                    continue;
+                }
+
                 if (verification.IsApproved)
                 {
                     await customOrders.HandlePaymentCallbackAsync(paymentState.BogOrderId, paymentState.BogOrderKey);
