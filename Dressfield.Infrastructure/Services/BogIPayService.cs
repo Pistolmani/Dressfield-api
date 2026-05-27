@@ -159,7 +159,82 @@ public class BogIPayService : IPaymentService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error verifying BOG payment {BogOrderId}", bogOrderId);
-            return new PaymentVerificationResult(false, bogOrderId, null, "exception");
+            return new PaymentVerificationResult(false, bogOrderId, null, "exception", IsTransientFailure: true);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<PaymentVerificationResult?> LookupByExternalOrderIdAsync(string externalOrderId)
+    {
+        if (string.IsNullOrWhiteSpace(_externalOrderLookupUrl))
+        {
+            // BOG does not currently expose a lookup-by-external_order_id endpoint.
+            // Return null so the reaper proceeds with cancellation.
+            // Recovery for the rare retry-exhaustion case relies on the CRITICAL log written
+            // by SaveBogSessionWithRetryAsync, which contains the BogOrderId for manual reconciliation.
+            _logger.LogDebug(
+                "LookupByExternalOrderIdAsync: BogIPay:ExternalOrderLookupUrl not configured — returning null for {ExternalOrderId}.",
+                externalOrderId);
+            return null;
+        }
+
+        try
+        {
+            var token = await _tokenProvider.GetAccessTokenAsync();
+            var url = $"{_externalOrderLookupUrl.TrimEnd('/')}/{Uri.EscapeDataString(externalOrderId)}";
+
+            using var req = new HttpRequestMessage(HttpMethod.Get, url);
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+            var res = await _http.SendAsync(req);
+
+            if (res.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                _logger.LogInformation("BOG has no record for external_order_id={ExternalOrderId}", externalOrderId);
+                return null;
+            }
+
+            var raw = await res.Content.ReadAsStringAsync();
+
+            if (!res.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("BOG external-order lookup failed {Status} for {ExternalOrderId}", res.StatusCode, externalOrderId);
+                return new PaymentVerificationResult(false, string.Empty, null, "error", IsTransientFailure: true);
+            }
+
+            using var doc = JsonDocument.Parse(raw);
+            var root = doc.RootElement;
+
+            // Parse the same shape as VerifyCallbackAsync — adjust if BOG's external-lookup response differs.
+            var bogOrderId = root.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? string.Empty : string.Empty;
+
+            var statusKey = root.TryGetProperty("order_status", out var orderStatus)
+                            && orderStatus.TryGetProperty("key", out var keyEl)
+                ? keyEl.GetString() ?? "unknown"
+                : "unknown";
+
+            var txnId = root.TryGetProperty("payment_detail", out var detail)
+                        && detail.TryGetProperty("transaction_id", out var t)
+                ? t.GetString()
+                : null;
+
+            decimal? verifiedAmount = null;
+            string? verifiedCurrency = null;
+            if (root.TryGetProperty("purchase_units", out var pu))
+            {
+                if (pu.TryGetProperty("transfer_amount", out var ta) && ta.TryGetDecimal(out var amt))
+                    verifiedAmount = amt;
+                if (pu.TryGetProperty("currency", out var ccy))
+                    verifiedCurrency = ccy.GetString();
+            }
+
+            var approved = string.Equals(statusKey, "completed", StringComparison.OrdinalIgnoreCase);
+            return new PaymentVerificationResult(approved, bogOrderId, txnId, statusKey, verifiedAmount, verifiedCurrency);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error looking up BOG external order {ExternalOrderId}", externalOrderId);
+            return new PaymentVerificationResult(false, string.Empty, null, "exception", IsTransientFailure: true);
         }
     }
 
