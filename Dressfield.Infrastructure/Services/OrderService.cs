@@ -441,6 +441,53 @@ public class OrderService : IOrderService
             order.Id, result.IsApproved ? "approved" : "declined", bogOrderId);
     }
 
+    /// <summary>
+    /// Persists the BOG session details (BogOrderId + AwaitingPayment status) after a successful
+    /// BOG session creation, with retries to guard against transient DB failures.
+    /// On exhaustion, logs CRITICAL with full reconciliation details so an operator can manually
+    /// recover via BOG admin. Does NOT cancel the order — the customer may still pay.
+    /// </summary>
+    private async Task SaveBogSessionWithRetryAsync(
+        int orderId, string bogOrderId, string bogOrderKey, decimal totalAmount, string? redirectUrl)
+    {
+        int[] retryDelaysMs = [200, 1000, 5000];
+
+        for (var attempt = 0; attempt < retryDelaysMs.Length + 1; attempt++)
+        {
+            try
+            {
+                // Use ExecuteUpdateAsync — a direct SQL UPDATE, more resilient than change-tracker
+                // SaveChanges after a prior failure may have dirtied the DbContext state.
+                await _db.Orders
+                    .Where(o => o.Id == orderId)
+                    .ExecuteUpdateAsync(s => s
+                        .SetProperty(o => o.BogOrderId, bogOrderId)
+                        .SetProperty(o => o.Status, OrderStatus.AwaitingPayment)
+                        .SetProperty(o => o.UpdatedAt, DateTime.UtcNow));
+                return; // success
+            }
+            catch (Exception ex) when (attempt < retryDelaysMs.Length)
+            {
+                _logger.LogWarning(ex,
+                    "Transient DB failure saving BOG session for order {OrderId} (attempt {Attempt}/{Max}). Retrying in {Delay}ms.",
+                    orderId, attempt + 1, retryDelaysMs.Length + 1, retryDelaysMs[attempt]);
+                await Task.Delay(retryDelaysMs[attempt]);
+            }
+            catch (Exception ex)
+            {
+                // All retries exhausted. Leave Status=Pending so the customer can still pay.
+                // The reaper will attempt to reconcile via BOG's external-order lookup.
+                _logger.LogCritical(ex,
+                    "CRITICAL: Failed to persist BOG session for order {OrderId} after {Max} attempts. " +
+                    "BogOrderKey={BogOrderKey} BogOrderId={BogOrderId} Amount=₾{Amount} RedirectUrl={RedirectUrl}. " +
+                    "The customer has a valid payment link and may complete payment. " +
+                    "Do NOT cancel this order manually. The reaper will reconcile via LookupByExternalOrderIdAsync.",
+                    orderId, retryDelaysMs.Length + 1, bogOrderKey, bogOrderId, totalAmount, redirectUrl);
+                return;
+            }
+        }
+    }
+
     private async Task CancelAndRestoreAsync(
         Order order,
         List<(int VariantId, int Quantity, string ProductName)> stockReservations,

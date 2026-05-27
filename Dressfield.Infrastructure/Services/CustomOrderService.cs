@@ -249,6 +249,25 @@ public class CustomOrderService : ICustomOrderService
             return;
         }
 
+        if (result.IsTransientFailure)
+        {
+            // BOG verification was unreachable (network error, timeout, parse failure).
+            // Reset to AwaitingPayment so the reaper retries on the next cycle.
+            order.Status = CustomOrderStatus.AwaitingPayment;
+            order.UpdatedAt = DateTime.UtcNow;
+
+            _db.CustomOrderStatusLogs.Add(new CustomOrderStatusLog
+            {
+                CustomOrderId = order.Id,
+                FromStatus = CustomOrderStatus.PaymentProcessing,
+                ToStatus = CustomOrderStatus.AwaitingPayment,
+                Notes = $"BOG verification temporarily unreachable ({result.Status}); will retry",
+            });
+
+            await _db.SaveChangesAsync();
+            return;
+        }
+
         if (BogPaymentStatus.IsPending(result.Status))
         {
             order.Status = CustomOrderStatus.AwaitingPayment;
