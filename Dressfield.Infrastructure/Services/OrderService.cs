@@ -306,9 +306,12 @@ public class OrderService : IOrderService
 
         if (paymentResult.Success && paymentResult.BogOrderId != null)
         {
+            // Retry the post-BOG save — a transient DB failure here would leave the order in
+            // Pending with no BogOrderId, causing the reaper to cancel an order the customer may have paid.
+            await SaveBogSessionWithRetryAsync(order.Id, paymentResult.BogOrderId, order.BogOrderKey, order.TotalAmount, paymentResult.RedirectUrl);
+            // Keep in-memory entity consistent for any callers who inspect order.Status after this.
             order.BogOrderId = paymentResult.BogOrderId;
             order.Status = OrderStatus.AwaitingPayment;
-            await _db.SaveChangesAsync();
         }
         else
         {
@@ -367,6 +370,26 @@ public class OrderService : IOrderService
             });
 
             await RestoreStockAndPromoAsync(order);
+            await _db.SaveChangesAsync();
+            return;
+        }
+
+        if (result.IsTransientFailure)
+        {
+            // BOG verification was unreachable (network error, timeout, parse failure).
+            // Reset to AwaitingPayment so the reaper retries on the next cycle.
+            order.Status = OrderStatus.AwaitingPayment;
+            order.UpdatedAt = DateTime.UtcNow;
+
+            _db.OrderStatusLogs.Add(new OrderStatusLog
+            {
+                OrderId = order.Id,
+                FromStatus = OrderStatus.PaymentProcessing,
+                ToStatus = OrderStatus.AwaitingPayment,
+                ChangedByUserId = null,
+                Notes = $"BOG verification temporarily unreachable ({result.Status}); will retry",
+            });
+
             await _db.SaveChangesAsync();
             return;
         }

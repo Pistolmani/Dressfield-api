@@ -164,26 +164,38 @@ public class CustomOrderService : ICustomOrderService
             }).ToList()
         };
 
+        await using var tx = await _db.Database.BeginTransactionAsync();
+
         _db.CustomOrders.Add(order);
         await _db.SaveChangesAsync();
+        await tx.CommitAsync();
 
         var description = $"DressField Custom Order #{order.Id}";
         var paymentResult = await _payment.CreateSessionAsync(order.Id, order.TotalPrice, orderKey, description);
 
         if (paymentResult.Success && paymentResult.BogOrderId != null)
         {
+            // Retry the post-BOG save with backoff — same pattern as OrderService.
+            await SaveBogSessionWithRetryAsync(order.Id, paymentResult.BogOrderId, order.BogOrderKey, order.TotalPrice, paymentResult.RedirectUrl);
             order.BogOrderId = paymentResult.BogOrderId;
             order.Status = CustomOrderStatus.AwaitingPayment;
-            order.UpdatedAt = DateTime.UtcNow;
 
-            _db.CustomOrderStatusLogs.Add(new CustomOrderStatusLog
+            // Status log is non-critical — log a warning if it fails but don't abort.
+            try
             {
-                CustomOrderId = order.Id,
-                FromStatus = CustomOrderStatus.Pending,
-                ToStatus = CustomOrderStatus.AwaitingPayment,
-                Notes = "BOG payment session created",
-            });
-            await _db.SaveChangesAsync();
+                _db.CustomOrderStatusLogs.Add(new CustomOrderStatusLog
+                {
+                    CustomOrderId = order.Id,
+                    FromStatus = CustomOrderStatus.Pending,
+                    ToStatus = CustomOrderStatus.AwaitingPayment,
+                    Notes = "BOG payment session created",
+                });
+                await _db.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to write status log for custom order {OrderId} Pending→AwaitingPayment", order.Id);
+            }
         }
         else
         {
