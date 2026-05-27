@@ -34,13 +34,24 @@ public class PaymentsController : ControllerBase
         IOrderService orders,
         ICustomOrderService customOrders,
         ILogger<PaymentsController> logger,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IHostEnvironment env)
     {
         _orders = orders;
         _customOrders = customOrders;
         _logger = logger;
-        _callbackPublicKeyPem = configuration["BogIPay:CallbackPublicKeyPem"] ?? DefaultCallbackPublicKeyPem;
         _callbackMaxAgeSeconds = configuration.GetValue("BogIPay:CallbackMaxAgeSeconds", 300);
+
+        var configuredKey = configuration["BogIPay:CallbackPublicKeyPem"];
+        if (string.IsNullOrWhiteSpace(configuredKey))
+        {
+            if (!env.IsDevelopment())
+                throw new InvalidOperationException(
+                    "BogIPay:CallbackPublicKeyPem must be configured outside Development. " +
+                    "Set it via Azure environment variable BogIPay__CallbackPublicKeyPem.");
+            configuredKey = DefaultCallbackPublicKeyPem;
+        }
+        _callbackPublicKeyPem = configuredKey;
     }
 
     /// <summary>
@@ -80,9 +91,13 @@ public class PaymentsController : ControllerBase
             var ageSeconds = (DateTime.UtcNow - callbackTime).TotalSeconds;
             if (ageSeconds > _callbackMaxAgeSeconds)
             {
-                _logger.LogWarning(
-                    "BOG callback is older than replay window but will be processed after signature verification (age: {Age:F0}s, max: {Max}s)",
-                    ageSeconds, _callbackMaxAgeSeconds);
+                // Return 200 so BOG doesn't retry, but skip processing.
+                // The atomic claim in HandlePaymentCallbackAsync already prevents
+                // replay of settled orders; this is defense-in-depth.
+                _logger.LogError(
+                    "BOG callback REJECTED — outside replay window (age: {Age:F0}s, max: {Max}s). RemoteIp={RemoteIp}",
+                    ageSeconds, _callbackMaxAgeSeconds, HttpContext.Connection.RemoteIpAddress);
+                return Ok();
             }
         }
 
