@@ -33,6 +33,9 @@ public class CreateCustomOrderRequestValidator : AbstractValidator<CreateCustomO
         RuleFor(x => x.CustomerNotes)
             .MaximumLength(1000).WithMessage("შენიშვნა მაქსიმუმ 1000 სიმბოლოა");
 
+        RuleFor(x => x.TotalPrice)
+            .GreaterThan(0).WithMessage("ფასი არასწორია");
+
         RuleFor(x => x.Designs)
             .NotEmpty().WithMessage("მინიმუმ ერთი დიზაინი საჭიროა");
 

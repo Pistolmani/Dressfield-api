@@ -5,7 +5,6 @@ using Dressfield.Core.Enums;
 using Dressfield.Core.Interfaces;
 using Dressfield.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Dressfield.Infrastructure.Services;
@@ -16,35 +15,17 @@ public class CustomOrderService : ICustomOrderService
     private readonly IPaymentService _payment;
     private readonly IStorageService _storage;
     private readonly ILogger<CustomOrderService> _logger;
-    private readonly IReadOnlyDictionary<string, decimal> _embroiderySizeExtraPrices;
-
-    /// <summary>Default embroidery prices, used when <c>CustomOrders:EmbroiderySizePrices</c> is not configured.</summary>
-    private static readonly IReadOnlyDictionary<string, decimal> DefaultEmbroiderySizeExtraPrices =
-        new Dictionary<string, decimal>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["S"] = 0m,
-            ["M"] = 10m,
-            ["L"] = 20m,
-            ["XL"] = 35m
-        };
 
     public CustomOrderService(
         DressfieldDbContext db,
         IPaymentService payment,
         IStorageService storage,
-        ILogger<CustomOrderService> logger,
-        IConfiguration configuration)
+        ILogger<CustomOrderService> logger)
     {
         _db = db;
         _payment = payment;
         _storage = storage;
         _logger = logger;
-
-        var configuredPrices = configuration.GetSection("CustomOrders:EmbroiderySizePrices")
-            .Get<Dictionary<string, decimal>>();
-        _embroiderySizeExtraPrices = configuredPrices is { Count: > 0 }
-            ? new Dictionary<string, decimal>(configuredPrices, StringComparer.OrdinalIgnoreCase)
-            : DefaultEmbroiderySizeExtraPrices;
     }
 
     public async Task<IReadOnlyCollection<CustomOrderSummaryDto>> GetAdminAsync(CustomOrderStatus? status)
@@ -119,22 +100,19 @@ public class CustomOrderService : ICustomOrderService
 
     public async Task<CustomOrderCheckoutResponse> CreateAsync(CreateCustomOrderRequest request, string? userId)
     {
-        decimal baseProductPrice = 0m;
-
         if (request.BaseProductId.HasValue)
         {
-            var baseProduct = await _db.Products
+            var baseProductExists = await _db.Products
                 .AsNoTracking()
-                .Where(p => p.Id == request.BaseProductId.Value && p.IsActive)
-                .Select(p => new { p.BasePrice })
-                .FirstOrDefaultAsync();
-            if (baseProduct is null)
+                .AnyAsync(p => p.Id == request.BaseProductId.Value && p.IsActive);
+            if (!baseProductExists)
                 throw new KeyNotFoundException("არჩეული პროდუქტი ვერ მოიძებნა");
-
-            baseProductPrice = baseProduct.BasePrice;
         }
 
-        var calculatedTotalPrice = baseProductPrice + CalculateEmbroideryExtra(request.Designs);
+        // The frontend is authoritative for the price — it applies the base custom fee,
+        // size adjustments, and promo discounts the backend doesn't model. We trust the
+        // submitted total (validated > 0) rather than recomputing it here.
+        var calculatedTotalPrice = request.TotalPrice;
 
         // Custom order keys are prefixed with "c-" so the payment callback can distinguish them
         var orderKey = "c-" + Guid.NewGuid().ToString("N");
@@ -359,23 +337,6 @@ public class CustomOrderService : ICustomOrderService
             o.Status,
             o.TotalPrice,
             o.CreatedAt);
-
-    private decimal CalculateEmbroideryExtra(IReadOnlyCollection<CreateCustomOrderDesignRequest> designs) =>
-        designs
-            .Select(d => ResolveEmbroideryExtra(d.Size))
-            .DefaultIfEmpty(0m)
-            .Max();
-
-    private decimal ResolveEmbroideryExtra(string? size)
-    {
-        if (string.IsNullOrWhiteSpace(size))
-            return 0m;
-
-        var normalized = size.Trim().ToUpperInvariant();
-        return _embroiderySizeExtraPrices.TryGetValue(normalized, out var extraPrice)
-            ? extraPrice
-            : 0m;
-    }
 
     /// <summary>
     /// Persists the BOG session details for a custom order after successful session creation,
