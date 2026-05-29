@@ -56,6 +56,12 @@ jobs:
           tenant-id: ${{ secrets.AZUREAPPSERVICE_TENANTID_0039BA66AAE04D0C85F2EC433745AC8E }}
           subscription-id: ${{ secrets.AZUREAPPSERVICE_SUBSCRIPTIONID_4AD31CD5E78E4152BABA245A92836CCB }}
 
+      # Stop the app before deploying so the worker releases its file locks on the
+      # managed DLLs. Without this, zip-deploy to a running Windows app silently fails
+      # to overwrite locked DLLs — the deploy reports success but old code keeps running.
+      - name: Stop Web App (release DLL locks)
+        run: az webapp stop --name "dressfield-api-prod" --resource-group "dressfield-api-prod"
+
       - name: Deploy to Azure Web App
         id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
@@ -63,4 +69,9 @@ jobs:
           app-name: "dressfield-api-prod"
           slot-name: "Production"
           package: ./publish
-          
+
+      # Always restart, even if the deploy step failed, so the app is never left stopped.
+      - name: Start Web App
+        if: always()
+        run: az webapp start --name "dressfield-api-prod" --resource-group "dressfield-api-prod"
+
