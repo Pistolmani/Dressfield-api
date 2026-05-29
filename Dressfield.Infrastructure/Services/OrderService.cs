@@ -16,7 +16,8 @@ public class OrderService : IOrderService
     private readonly IPaymentService _payment;
     private readonly ICartService _cart;
     private readonly ILogger<OrderService> _logger;
-    private readonly decimal _shippingCost;
+    private readonly decimal _shippingCostTbilisi;
+    private readonly decimal _shippingCostOther;
     private readonly string _paymentPageBaseUrl;
 
     public OrderService(DressfieldDbContext db, IPaymentService payment, ICartService cart, IConfiguration configuration, ILogger<OrderService> logger)
@@ -25,8 +26,21 @@ public class OrderService : IOrderService
         _payment = payment;
         _cart = cart;
         _logger = logger;
-        _shippingCost = decimal.TryParse(configuration["Orders:ShippingCost"], out var sc) ? sc : 5m;
-        _paymentPageBaseUrl = configuration["BogIPay:PaymentPageBaseUrl"] ?? "https://payment.bog.ge/";
+        _shippingCostTbilisi = decimal.TryParse(configuration["Orders:ShippingCost"], out var sc) ? sc : 5m;
+        _shippingCostOther   = decimal.TryParse(configuration["Orders:ShippingCostOtherCities"], out var sco) ? sco : 15m;
+        _paymentPageBaseUrl  = configuration["BogIPay:PaymentPageBaseUrl"] ?? "https://payment.bog.ge/";
+    }
+
+    /// <summary>
+    /// Mirrors the frontend's <c>getShippingCostByCity</c> (checkout/page.tsx).
+    /// Keep the city names and costs in sync if either side changes.
+    /// </summary>
+    private decimal ResolveShippingCost(string? city)
+    {
+        var normalized = city?.Trim().ToLowerInvariant() ?? string.Empty;
+        if (normalized == string.Empty || normalized == "tbilisi" || normalized == "თბილისი")
+            return _shippingCostTbilisi;
+        return _shippingCostOther;
     }
 
     public async Task<IReadOnlyCollection<OrderSummaryDto>> GetAdminAsync(OrderStatus? status)
@@ -246,6 +260,7 @@ public class OrderService : IOrderService
         }
 
         var discountedSubtotal = Math.Max(0m, subtotal - promoDiscountAmount);
+        var shippingCost = ResolveShippingCost(request.ShippingCity);
         var orderKey = Guid.NewGuid().ToString("N");
 
         var order = new Order
@@ -264,8 +279,8 @@ public class OrderService : IOrderService
             PromoDiscountAmount = promoDiscountAmount,
             PromoDiscountPercentage = promoDiscountPercentage,
             PromoCode = normalizedPromoCode,
-            ShippingCost = _shippingCost,
-            TotalAmount = discountedSubtotal + _shippingCost,
+            ShippingCost = shippingCost,
+            TotalAmount = discountedSubtotal + shippingCost,
             BogOrderKey = orderKey,
             Status = OrderStatus.Pending,
             Items = items
