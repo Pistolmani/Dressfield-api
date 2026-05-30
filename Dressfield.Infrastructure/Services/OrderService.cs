@@ -3,6 +3,7 @@ using Dressfield.Application.Interfaces;
 using Dressfield.Core.Entities;
 using Dressfield.Core.Enums;
 using Dressfield.Core.Interfaces;
+using Dressfield.Core.Pricing;
 using Dressfield.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -32,16 +33,11 @@ public class OrderService : IOrderService
     }
 
     /// <summary>
-    /// Mirrors the frontend's <c>getShippingCostByCity</c> (checkout/page.tsx).
+    /// Mirrors the frontend's <c>getShippingCostByCity</c> (Dressfield.web/src/lib/shipping.ts).
     /// Keep the city names and costs in sync if either side changes.
     /// </summary>
     private decimal ResolveShippingCost(string? city)
-    {
-        var normalized = city?.Trim().ToLowerInvariant() ?? string.Empty;
-        if (normalized == string.Empty || normalized == "tbilisi" || normalized == "თბილისი")
-            return _shippingCostTbilisi;
-        return _shippingCostOther;
-    }
+        => ShippingPricing.Resolve(city, _shippingCostTbilisi, _shippingCostOther);
 
     public async Task<IReadOnlyCollection<OrderSummaryDto>> GetAdminAsync(OrderStatus? status)
     {
