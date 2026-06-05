@@ -36,6 +36,24 @@ public class CreateCustomOrderRequestValidator : AbstractValidator<CreateCustomO
         RuleFor(x => x.TotalPrice)
             .GreaterThan(0).WithMessage("ფასი არასწორია");
 
+        RuleFor(x => x.ProductTypeId)
+            .MaximumLength(50).WithMessage("პროდუქტის ტიპი მაქსიმუმ 50 სიმბოლოა");
+
+        RuleFor(x => x.ColorHex)
+            .MaximumLength(20).WithMessage("ფერი მაქსიმუმ 20 სიმბოლოა");
+
+        RuleFor(x => x.ClothingSize)
+            .MaximumLength(20).WithMessage("ზომა მაქსიმუმ 20 სიმბოლოა");
+
+        // Guard against absurd canvas sizes that could break the admin preview math.
+        RuleFor(x => x.CanvasWidth)
+            .InclusiveBetween(1, 10_000).When(x => x.CanvasWidth.HasValue)
+            .WithMessage("ტილოს სიგანე არასწორია");
+
+        RuleFor(x => x.CanvasHeight)
+            .InclusiveBetween(1, 10_000).When(x => x.CanvasHeight.HasValue)
+            .WithMessage("ტილოს სიმაღლე არასწორია");
+
         RuleFor(x => x.Designs)
             .NotEmpty().WithMessage("მინიმუმ ერთი დიზაინი საჭიროა");
 
@@ -62,6 +80,21 @@ public class CreateCustomOrderDesignRequestValidator : AbstractValidator<CreateC
 
         RuleFor(x => x.ThreadColor)
             .MaximumLength(20).WithMessage("ძაფის ფერი მაქსიმუმ 20 სიმბოლოა");
+
+        RuleFor(x => x.Side)
+            .MaximumLength(20).WithMessage("მხარე მაქსიმუმ 20 სიმბოლოა");
+
+        // Canvas geometry — reject anything that's clearly a bug (negatives, NaN-as-default).
+        // Generous upper bound: canvases are typically ≤1000px but we don't want false positives.
+        RuleFor(x => x.PositionX).GreaterThanOrEqualTo(0).When(x => x.PositionX.HasValue);
+        RuleFor(x => x.PositionY).GreaterThanOrEqualTo(0).When(x => x.PositionY.HasValue);
+        RuleFor(x => x.Width).GreaterThan(0).When(x => x.Width.HasValue);
+        RuleFor(x => x.Height).GreaterThan(0).When(x => x.Height.HasValue);
+        RuleFor(x => x.ScaleX).GreaterThan(0).When(x => x.ScaleX.HasValue);
+        RuleFor(x => x.ScaleY).GreaterThan(0).When(x => x.ScaleY.HasValue);
+        RuleFor(x => x.Angle)
+            .InclusiveBetween(-360, 360).When(x => x.Angle.HasValue)
+            .WithMessage("კუთხე -360°...360° შუალედშია");
 
         RuleFor(x => x.SortOrder)
             .GreaterThanOrEqualTo(0).WithMessage("რიგითობა ვერ იქნება უარყოფითი");

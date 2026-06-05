@@ -8,10 +8,14 @@ public record CustomOrderDesignDto(
     string? Placement,
     string? Size,
     string? ThreadColor,
+    string? Side,
     decimal? Width,
     decimal? Height,
     decimal? PositionX,
     decimal? PositionY,
+    decimal? ScaleX,
+    decimal? ScaleY,
+    decimal? Angle,
     int SortOrder);
 
 public record CustomOrderSummaryDto(
@@ -38,6 +42,11 @@ public record CustomOrderDetailDto(
     decimal TotalPrice,
     string? CustomerNotes,
     string? AdminNotes,
+    string? ProductTypeId,
+    string? ColorHex,
+    string? ClothingSize,
+    int? CanvasWidth,
+    int? CanvasHeight,
     DateTime CreatedAt,
     DateTime UpdatedAt,
     IReadOnlyCollection<CustomOrderDesignDto> Designs);
@@ -47,10 +56,14 @@ public record CreateCustomOrderDesignRequest(
     string? Placement,
     string? Size,
     string? ThreadColor,
+    string? Side,
     decimal? Width,
     decimal? Height,
     decimal? PositionX,
     decimal? PositionY,
+    decimal? ScaleX,
+    decimal? ScaleY,
+    decimal? Angle,
     int SortOrder);
 
 public record CreateCustomOrderRequest(
@@ -60,6 +73,11 @@ public record CreateCustomOrderRequest(
     string ContactEmail,
     string? CustomerNotes,
     decimal TotalPrice,
+    string? ProductTypeId,
+    string? ColorHex,
+    string? ClothingSize,
+    int? CanvasWidth,
+    int? CanvasHeight,
     IReadOnlyCollection<CreateCustomOrderDesignRequest> Designs);
 
 public record UpdateCustomOrderStatusRequest(

@@ -126,6 +126,11 @@ public class CustomOrderService : ICustomOrderService
             ContactEmail = request.ContactEmail.Trim().ToLowerInvariant(),
             TotalPrice = calculatedTotalPrice,
             CustomerNotes = request.CustomerNotes?.Trim(),
+            ProductTypeId = request.ProductTypeId?.Trim(),
+            ColorHex = request.ColorHex?.Trim(),
+            ClothingSize = request.ClothingSize?.Trim(),
+            CanvasWidth = request.CanvasWidth,
+            CanvasHeight = request.CanvasHeight,
             BogOrderKey = orderKey,
             Status = CustomOrderStatus.Pending,
             Designs = request.Designs.Select(d => new CustomOrderDesign
@@ -134,10 +139,14 @@ public class CustomOrderService : ICustomOrderService
                 Placement = d.Placement?.Trim(),
                 Size = d.Size?.Trim(),
                 ThreadColor = d.ThreadColor?.Trim(),
+                Side = d.Side?.Trim(),
                 Width = d.Width,
                 Height = d.Height,
                 PositionX = d.PositionX,
                 PositionY = d.PositionY,
+                ScaleX = d.ScaleX,
+                ScaleY = d.ScaleY,
+                Angle = d.Angle,
                 SortOrder = d.SortOrder
             }).ToList()
         };
@@ -308,6 +317,11 @@ public class CustomOrderService : ICustomOrderService
             o.TotalPrice,
             o.CustomerNotes,
             o.AdminNotes,
+            o.ProductTypeId,
+            o.ColorHex,
+            o.ClothingSize,
+            o.CanvasWidth,
+            o.CanvasHeight,
             o.CreatedAt,
             o.UpdatedAt,
             o.Designs
@@ -318,10 +332,14 @@ public class CustomOrderService : ICustomOrderService
                     d.Placement,
                     d.Size,
                     d.ThreadColor,
+                    d.Side,
                     d.Width,
                     d.Height,
                     d.PositionX,
                     d.PositionY,
+                    d.ScaleX,
+                    d.ScaleY,
+                    d.Angle,
                     d.SortOrder))
                 .ToList());
 
