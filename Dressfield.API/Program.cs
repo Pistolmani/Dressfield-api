@@ -278,6 +278,8 @@ else
 
 builder.Services.Configure<Dressfield.Application.Validators.UploadHostOptions>(o =>
     o.AllowedHosts = builder.Configuration.GetSection("AzureStorage:AllowedUploadHosts").Get<string[]>() ?? []);
+builder.Services.Configure<Dressfield.Application.Options.CustomOrderPricingOptions>(
+    builder.Configuration.GetSection("CustomOrders:PriceFloor"));
 builder.Services.AddValidatorsFromAssemblyContaining<Dressfield.Application.DTOs.RegisterRequest>();
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
