@@ -10,5 +10,5 @@ public enum OrderStatus
     Delivered = 5,          // Confirmed delivered
     Cancelled = 6,          // Cancelled before payment
     Refunded = 7,           // Payment reversed
-    PaymentProcessing = 8   // Callback claimed — BOG verification in flight
+    PaymentProcessing = 8   // Callback claimed - BOG verification in flight
 }

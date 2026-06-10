@@ -6,10 +6,10 @@ public class CustomOrder
 {
     public int Id { get; set; }
 
-    // Nullable — guest orders are supported
+    // Nullable - guest orders are supported
     public string? UserId { get; set; }
 
-    // Nullable — customer can order from a base product or submit a blank canvas
+    // Nullable - customer can order from a base product or submit a blank canvas
     public int? BaseProductId { get; set; }
 
     public string ContactName { get; set; } = string.Empty;
@@ -23,7 +23,7 @@ public class CustomOrder
     public string? CustomerNotes { get; set; }
     public string? AdminNotes { get; set; }
 
-    // Garment context — populated so the admin preview can re-render the customer's design
+    // Garment context - populated so the admin preview can re-render the customer's design
     // on top of the same product silhouette + color they configured at checkout.
     public string? ProductTypeId { get; set; }   // "hoodie" | "tshirt" | "cap" | etc.
     public string? ColorHex { get; set; }        // garment color e.g. "#000000"

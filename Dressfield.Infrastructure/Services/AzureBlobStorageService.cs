@@ -14,7 +14,7 @@ public class AzureBlobStorageService : IStorageService
     private static readonly HashSet<string> ImageContentTypes =
         new(StringComparer.OrdinalIgnoreCase) { "image/jpeg", "image/png", "image/webp", "image/gif" };
 
-    private const int MaxDimension = 1600; // px — longest edge
+    private const int MaxDimension = 1600; // px - longest edge
     private const int WebpQuality  = 82;
 
     private readonly BlobContainerClient _container;
@@ -40,7 +40,7 @@ public class AzureBlobStorageService : IStorageService
 
         _container = new BlobContainerClient(connectionString, containerName);
         // Lazy-init: container creation runs asynchronously on first use instead of blocking
-        // the DI thread during startup. Container is private — existing containers must have their
+        // the DI thread during startup. Container is private - existing containers must have their
         // public-access policy flipped to None in the portal/CLI; this call only applies on first creation.
         _ensureCreated = new Lazy<Task>(() =>
             _container.CreateIfNotExistsAsync(PublicAccessType.None));

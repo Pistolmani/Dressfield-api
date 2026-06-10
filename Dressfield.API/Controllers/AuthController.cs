@@ -69,13 +69,13 @@ public class AuthController : ControllerBase
     [EnableRateLimiting("auth")]
     public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
     {
-        // Use the configured frontend URL — never trust the Origin/Host header from the request
+        // Use the configured frontend URL - never trust the Origin/Host header from the request
         var frontendBase = _config["App:FrontendBaseUrl"]
             ?? throw new InvalidOperationException("App:FrontendBaseUrl is not configured.");
         var resetBaseUrl = $"{frontendBase.TrimEnd('/')}/auth/reset-password";
 
         await _authService.ForgotPasswordAsync(request.Email, resetBaseUrl);
-        return Ok(); // Always return OK — never reveal whether the email exists
+        return Ok(); // Always return OK - never reveal whether the email exists
     }
 
     [HttpPost("reset-password")]

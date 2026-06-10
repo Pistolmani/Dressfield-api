@@ -38,7 +38,7 @@ public class MockPaymentService : IPaymentService
 
     public Task<PaymentVerificationResult?> LookupByExternalOrderIdAsync(string externalOrderId)
     {
-        // Mock has no orphaned sessions — return null (no record found, safe to cancel).
+        // Mock has no orphaned sessions - return null (no record found, safe to cancel).
         _logger.LogWarning("[MockPayment] LookupByExternalOrderIdAsync({ExternalOrderId}) → null (mock).", externalOrderId);
         return Task.FromResult<PaymentVerificationResult?>(null);
     }

@@ -18,7 +18,7 @@ public interface IPaymentService
     /// (i.e. the order's <c>BogOrderKey</c> / <c>orderKey</c> string).
     /// Returns <c>null</c> when BOG has no record for that key (order never reached BOG).
     /// Returns a result with <see cref="PaymentVerificationResult.IsTransientFailure"/> = true
-    /// when the lookup endpoint is unreachable or not configured — callers must skip cancellation
+    /// when the lookup endpoint is unreachable or not configured - callers must skip cancellation
     /// and retry on the next cycle.
     /// </summary>
     Task<PaymentVerificationResult?> LookupByExternalOrderIdAsync(string externalOrderId);

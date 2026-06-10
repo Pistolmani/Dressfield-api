@@ -88,9 +88,9 @@ public class AuthService : IAuthService
 
     public async Task<AuthResponse> RefreshTokenAsync(string refreshToken)
     {
-        // Atomic single-use revocation: ExecuteUpdateAsync issues a single UPDATE … WHERE,
+        // Atomic single-use revocation: ExecuteUpdateAsync issues a single UPDATE ... WHERE,
         // so two concurrent requests racing on the same token both attempt the update but
-        // only one row is affected — the loser is rejected.
+        // only one row is affected - the loser is rejected.
         var tokenHash = ComputeRefreshTokenHash(refreshToken);
         var rowsUpdated = await _db.RefreshTokens
             .Where(r => r.Token == tokenHash && !r.IsRevoked && r.ExpiresAt > DateTime.UtcNow)

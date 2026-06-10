@@ -30,7 +30,7 @@ public class OrdersController : ControllerBase
         _auditLog        = auditLog;
     }
 
-    /// <summary>POST /api/orders — place an order, returns BOG payment redirect URL.</summary>
+    /// <summary>POST /api/orders - place an order, returns BOG payment redirect URL.</summary>
     [HttpPost]
     [EnableRateLimiting("orders")]
     public async Task<IActionResult> Create([FromBody] CreateOrderRequest request)
@@ -53,7 +53,7 @@ public class OrdersController : ControllerBase
         }
     }
 
-    /// <summary>GET /api/orders/my — authenticated user's orders.</summary>
+    /// <summary>GET /api/orders/my - authenticated user's orders.</summary>
     [HttpGet("my")]
     [Authorize]
     public async Task<IActionResult> GetMine()
@@ -63,7 +63,7 @@ public class OrdersController : ControllerBase
         return Ok(orders);
     }
 
-    /// <summary>GET /api/orders/my/{id} — authenticated user's order detail.</summary>
+    /// <summary>GET /api/orders/my/{id} - authenticated user's order detail.</summary>
     [HttpGet("my/{id:int}")]
     [Authorize]
     public async Task<IActionResult> GetMineById(int id)
@@ -74,7 +74,7 @@ public class OrdersController : ControllerBase
     }
 
     /// <summary>
-    /// GET /api/orders/status?orderId=1&amp;key=... â€” public status lookup for payment return flow.
+    /// GET /api/orders/status?orderId=1&amp;key=... - public status lookup for payment return flow.
     /// </summary>
     [HttpGet("status")]
     [EnableRateLimiting("status")]
@@ -89,7 +89,7 @@ public class OrdersController : ControllerBase
         return status is null ? NotFound() : Ok(status);
     }
 
-    /// <summary>GET /api/orders/admin?status=Pending — all orders, optionally filtered.</summary>
+    /// <summary>GET /api/orders/admin?status=Pending - all orders, optionally filtered.</summary>
     [HttpGet("admin")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> GetAdmin([FromQuery] OrderStatus? status)
@@ -125,7 +125,7 @@ public class OrdersController : ControllerBase
                 entityName: $"Order #{id}",
                 actorId: adminUserId,
                 actorEmail: User.FindFirstValue(ClaimTypes.Email),
-                details: $"Status → {request.Status}{(string.IsNullOrWhiteSpace(request.AdminNotes) ? "" : $"; Notes: {request.AdminNotes}")}");
+                details: $"Status -> {request.Status}{(string.IsNullOrWhiteSpace(request.AdminNotes) ? "" : $"; Notes: {request.AdminNotes}")}");
             return NoContent();
         }
         catch (KeyNotFoundException)

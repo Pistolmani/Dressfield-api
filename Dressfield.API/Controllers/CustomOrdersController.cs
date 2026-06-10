@@ -51,7 +51,7 @@ public class CustomOrdersController : ControllerBase
         return Ok(await _customOrderService.GetByUserAsync(userId));
     }
 
-    /// <summary>Get a specific order — customer can only access their own.</summary>
+    /// <summary>Get a specific order - customer can only access their own.</summary>
     [Authorize]
     [HttpGet("my/{id:int}")]
     public async Task<ActionResult<CustomOrderDetailDto>> GetMineById(int id)

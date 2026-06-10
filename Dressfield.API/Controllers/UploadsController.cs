@@ -24,7 +24,7 @@ public class UploadsController : ControllerBase
     /// <summary>
     /// Upload a design image (JPG/PNG/WebP, max 10 MB).
     /// Returns the public URL for use in custom order submissions.
-    /// Open to all — no authentication required (guests need to upload too).
+    /// Open to all - no authentication required (guests need to upload too).
     /// </summary>
     [HttpPost("design")]
     [EnableRateLimiting("upload")]

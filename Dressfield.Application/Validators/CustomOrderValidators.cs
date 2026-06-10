@@ -84,8 +84,8 @@ public class CreateCustomOrderDesignRequestValidator : AbstractValidator<CreateC
         RuleFor(x => x.Side)
             .MaximumLength(20).WithMessage("მხარე მაქსიმუმ 20 სიმბოლოა");
 
-        // Canvas geometry — reject anything that's clearly a bug (negatives, NaN-as-default).
-        // Generous upper bound: canvases are typically ≤1000px but we don't want false positives.
+        // Canvas geometry - reject anything that's clearly a bug (negatives, NaN-as-default).
+        // Generous upper bound: canvases are typically <=1000px but we don't want false positives.
         RuleFor(x => x.PositionX).GreaterThanOrEqualTo(0).When(x => x.PositionX.HasValue);
         RuleFor(x => x.PositionY).GreaterThanOrEqualTo(0).When(x => x.PositionY.HasValue);
         RuleFor(x => x.Width).GreaterThan(0).When(x => x.Width.HasValue);
@@ -109,7 +109,7 @@ public class CreateCustomOrderDesignRequestValidator : AbstractValidator<CreateC
             return false;
 
         // Fail closed: require an explicit allowlist. Any environment lacking AzureStorage:AllowedUploadHosts
-        // rejects every design URL — better than silently accepting arbitrary HTTPS resources.
+        // rejects every design URL - better than silently accepting arbitrary HTTPS resources.
         if (allowedHosts.Length == 0)
             return false;
 

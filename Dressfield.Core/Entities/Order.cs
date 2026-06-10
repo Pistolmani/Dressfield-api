@@ -6,10 +6,10 @@ public class Order
 {
     public int Id { get; set; }
 
-    // Nullable — guest checkout supported
+    // Nullable - guest checkout supported
     public string? UserId { get; set; }
 
-    // Contact snapshot (denormalised — survives user deletion)
+    // Contact snapshot (denormalised - survives user deletion)
     public string ContactName { get; set; } = string.Empty;
     public string ContactPhone { get; set; } = string.Empty;
     public string ContactEmail { get; set; } = string.Empty;
@@ -34,7 +34,7 @@ public class Order
     public string? BogOrderId { get; set; }      // ID returned by BOG when creating a payment session
     public string? BogOrderKey { get; set; }     // Unique key we generate and send to BOG
 
-    // Nullable — only set for authenticated users; guards against double-submit on network retry
+    // Nullable - only set for authenticated users; guards against double-submit on network retry
     public string? IdempotencyKey { get; set; }
 
     // Shipping tracking (set by admin when order is marked Shipped)

@@ -15,9 +15,9 @@ public interface IOrderService
     Task<OrderDetailDto?> GetByIdForUserAsync(int id, string userId);
     Task<OrderStatusLookupDto?> GetPublicStatusAsync(int orderId, string orderKey);
 
-    // Checkout — works for guests and logged-in users
+    // Checkout - works for guests and logged-in users
     Task<CheckoutResponse> CreateAsync(CreateOrderRequest request, string? userId, string? idempotencyKey = null);
 
-    // Payment webhook — called when BOG confirms payment status
+    // Payment webhook - called when BOG confirms payment status
     Task HandlePaymentCallbackAsync(string bogOrderId, string? orderKey);
 }

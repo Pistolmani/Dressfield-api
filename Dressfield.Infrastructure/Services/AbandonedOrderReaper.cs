@@ -137,7 +137,7 @@ public class AbandonedOrderReaper : BackgroundService
     }
 
     /// <summary>
-    /// Cancels regular orders stuck in <see cref="OrderStatus.Pending"/> — meaning the BOG session
+    /// Cancels regular orders stuck in <see cref="OrderStatus.Pending"/> - meaning the BOG session
     /// was never created (or the process crashed before saving <c>BogOrderId</c>).
     /// These have no payment session so stock would be reserved indefinitely without this cleanup.
     /// </summary>
@@ -168,7 +168,7 @@ public class AbandonedOrderReaper : BackgroundService
                         continue;
                     }
 
-                    // BOG has a session for this order — hydrate and let the normal flow resolve it.
+                    // BOG has a session for this order - hydrate and let the normal flow resolve it.
                     var hydrated = await db.Orders
                         .Where(o => o.Id == id && o.Status == OrderStatus.Pending)
                         .ExecuteUpdateAsync(
@@ -186,7 +186,7 @@ public class AbandonedOrderReaper : BackgroundService
                     }
                     continue;
                 }
-                // null → BOG has no record for this key, order never reached BOG. Cancel normally.
+                // null -> BOG has no record for this key, order never reached BOG. Cancel normally.
             }
 
             var claimed = await db.Orders
@@ -252,7 +252,7 @@ public class AbandonedOrderReaper : BackgroundService
         {
             var id = stale.Id;
 
-            // Same BOG lookup guard as regular orders — avoid cancelling if customer already paid.
+            // Same BOG lookup guard as regular orders - avoid cancelling if customer already paid.
             if (!string.IsNullOrWhiteSpace(stale.BogOrderKey))
             {
                 var lookup = await payment.LookupByExternalOrderIdAsync(stale.BogOrderKey);

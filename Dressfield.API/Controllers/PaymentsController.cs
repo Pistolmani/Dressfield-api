@@ -119,7 +119,7 @@ public class PaymentsController : ControllerBase
         }
         catch (Exception ex)
         {
-            // Log but swallow — BOG must receive 200 or it retries
+            // Log but swallow - BOG must receive 200 or it retries
             _logger.LogCritical(ex, "Unhandled error processing BOG callback for {BogOrderId}", orderId);
         }
 

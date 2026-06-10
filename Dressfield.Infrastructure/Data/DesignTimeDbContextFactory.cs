@@ -6,7 +6,7 @@ namespace Dressfield.Infrastructure.Data;
 /// <summary>
 /// Lets <c>dotnet ef migrations add</c> build a DbContext without spinning up the full
 /// host (which fails locally due to validator DI scanning + missing prod secrets).
-/// Only used at design time — the runtime uses Program.cs's registration.
+/// Only used at design time - the runtime uses Program.cs's registration.
 /// </summary>
 public class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<DressfieldDbContext>
 {
