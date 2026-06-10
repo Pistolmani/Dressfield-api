@@ -21,10 +21,15 @@ jobs:
           dotnet-version: "9.x"
 
       - name: Restore
-        run: dotnet restore Dressfield.API/Dressfield.API.csproj
+        run: dotnet restore Dressfield-api.sln
 
       - name: Build
-        run: dotnet build Dressfield.API/Dressfield.API.csproj -c Release --no-restore
+        run: dotnet build Dressfield-api.sln -c Release --no-restore
+
+      # Tests use SQLite in-memory - no network or database needed on the runner.
+      # A failing test fails this job, and deploy needs:build, so red tests block deploys.
+      - name: Test
+        run: dotnet test Dressfield.Tests/Dressfield.Tests.csproj -c Release --no-build --verbosity normal
 
       - name: Publish
         run: dotnet publish Dressfield.API/Dressfield.API.csproj -c Release --no-build -o ./publish
