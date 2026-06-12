@@ -88,36 +88,20 @@ public class AuthService : IAuthService
 
     public async Task<AuthResponse> RefreshTokenAsync(string refreshToken)
     {
-        // Try the current HMAC scheme first. Atomic single-use revocation: ExecuteUpdateAsync
-        // issues a single UPDATE … WHERE, so two concurrent requests racing on the same token
-        // both attempt the update but only one row is affected — the loser is rejected.
-        var primaryHash = ComputeRefreshTokenHash(refreshToken);
+        // Atomic single-use revocation: ExecuteUpdateAsync issues a single UPDATE ... WHERE,
+        // so two concurrent requests racing on the same token both attempt the update but
+        // only one row is affected - the loser is rejected.
+        var tokenHash = ComputeRefreshTokenHash(refreshToken);
         var rowsUpdated = await _db.RefreshTokens
-            .Where(r => r.Token == primaryHash && !r.IsRevoked && r.ExpiresAt > DateTime.UtcNow)
+            .Where(r => r.Token == tokenHash && !r.IsRevoked && r.ExpiresAt > DateTime.UtcNow)
             .ExecuteUpdateAsync(s => s.SetProperty(r => r.IsRevoked, true));
 
-        var matchedHash = primaryHash;
-
         if (rowsUpdated == 0)
-        {
-            // Legacy fallback: refresh tokens issued before the HMAC migration were stored as
-            // raw SHA-256. Try matching that scheme; on a hit, the issued replacement token is
-            // already stored under the new HMAC scheme. After the longest refresh-token lifetime
-            // elapses post-deploy, this fallback can be removed in a follow-up PR.
-            var legacyHash = ComputeLegacyRefreshTokenHash(refreshToken);
-            rowsUpdated = await _db.RefreshTokens
-                .Where(r => r.Token == legacyHash && !r.IsRevoked && r.ExpiresAt > DateTime.UtcNow)
-                .ExecuteUpdateAsync(s => s.SetProperty(r => r.IsRevoked, true));
-
-            if (rowsUpdated == 0)
-                throw new UnauthorizedAccessException("Invalid refresh token");
-
-            matchedHash = legacyHash;
-        }
+            throw new UnauthorizedAccessException("Invalid refresh token");
 
         var stored = await _db.RefreshTokens
             .Include(r => r.User)
-            .FirstAsync(r => r.Token == matchedHash);
+            .FirstAsync(r => r.Token == tokenHash);
 
         return await GenerateAuthResponse(stored.User);
     }
@@ -312,12 +296,6 @@ public class AuthService : IAuthService
     private string ComputeRefreshTokenHash(string token)
     {
         var bytes = HMACSHA256.HashData(_refreshTokenPepper, Encoding.UTF8.GetBytes(token));
-        return Convert.ToBase64String(bytes);
-    }
-
-    private static string ComputeLegacyRefreshTokenHash(string token)
-    {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(token));
         return Convert.ToBase64String(bytes);
     }
 

@@ -109,7 +109,7 @@ public class CustomOrderService : ICustomOrderService
                 throw new KeyNotFoundException("არჩეული პროდუქტი ვერ მოიძებნა");
         }
 
-        // The frontend is authoritative for the price — it applies the base custom fee,
+        // The frontend is authoritative for the price - it applies the base custom fee,
         // size adjustments, and promo discounts the backend doesn't model. We trust the
         // submitted total (validated > 0) rather than recomputing it here.
         var calculatedTotalPrice = request.TotalPrice;
@@ -126,6 +126,11 @@ public class CustomOrderService : ICustomOrderService
             ContactEmail = request.ContactEmail.Trim().ToLowerInvariant(),
             TotalPrice = calculatedTotalPrice,
             CustomerNotes = request.CustomerNotes?.Trim(),
+            ProductTypeId = request.ProductTypeId?.Trim(),
+            ColorHex = request.ColorHex?.Trim(),
+            ClothingSize = request.ClothingSize?.Trim(),
+            CanvasWidth = request.CanvasWidth,
+            CanvasHeight = request.CanvasHeight,
             BogOrderKey = orderKey,
             Status = CustomOrderStatus.Pending,
             Designs = request.Designs.Select(d => new CustomOrderDesign
@@ -134,10 +139,14 @@ public class CustomOrderService : ICustomOrderService
                 Placement = d.Placement?.Trim(),
                 Size = d.Size?.Trim(),
                 ThreadColor = d.ThreadColor?.Trim(),
+                Side = d.Side?.Trim(),
                 Width = d.Width,
                 Height = d.Height,
                 PositionX = d.PositionX,
                 PositionY = d.PositionY,
+                ScaleX = d.ScaleX,
+                ScaleY = d.ScaleY,
+                Angle = d.Angle,
                 SortOrder = d.SortOrder
             }).ToList()
         };
@@ -153,12 +162,12 @@ public class CustomOrderService : ICustomOrderService
 
         if (paymentResult.Success && paymentResult.BogOrderId != null)
         {
-            // Retry the post-BOG save with backoff — same pattern as OrderService.
+            // Retry the post-BOG save with backoff - same pattern as OrderService.
             await SaveBogSessionWithRetryAsync(order.Id, paymentResult.BogOrderId, order.BogOrderKey, order.TotalPrice, paymentResult.RedirectUrl);
             order.BogOrderId = paymentResult.BogOrderId;
             order.Status = CustomOrderStatus.AwaitingPayment;
 
-            // Status log is non-critical — log a warning if it fails but don't abort.
+            // Status log is non-critical - log a warning if it fails but don't abort.
             try
             {
                 _db.CustomOrderStatusLogs.Add(new CustomOrderStatusLog
@@ -195,7 +204,7 @@ public class CustomOrderService : ICustomOrderService
 
     public async Task HandlePaymentCallbackAsync(string bogOrderId, string? orderKey)
     {
-        // Atomic claim: only one concurrent caller transitions AwaitingPayment → PaymentProcessing.
+        // Atomic claim: only one concurrent caller transitions AwaitingPayment -> PaymentProcessing.
         // RSA signature on the controller already authenticates the caller; orderKey is not re-checked here.
         var claimed = await _db.CustomOrders
             .Where(o => o.BogOrderId == bogOrderId && o.Status == CustomOrderStatus.AwaitingPayment)
@@ -308,6 +317,11 @@ public class CustomOrderService : ICustomOrderService
             o.TotalPrice,
             o.CustomerNotes,
             o.AdminNotes,
+            o.ProductTypeId,
+            o.ColorHex,
+            o.ClothingSize,
+            o.CanvasWidth,
+            o.CanvasHeight,
             o.CreatedAt,
             o.UpdatedAt,
             o.Designs
@@ -318,10 +332,14 @@ public class CustomOrderService : ICustomOrderService
                     d.Placement,
                     d.Size,
                     d.ThreadColor,
+                    d.Side,
                     d.Width,
                     d.Height,
                     d.PositionX,
                     d.PositionY,
+                    d.ScaleX,
+                    d.ScaleY,
+                    d.Angle,
                     d.SortOrder))
                 .ToList());
 

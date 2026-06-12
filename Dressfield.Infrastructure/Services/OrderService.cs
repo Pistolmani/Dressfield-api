@@ -284,7 +284,7 @@ public class OrderService : IOrderService
 
         await using var tx = await _db.Database.BeginTransactionAsync();
 
-        // Atomic stock decrement — guard prevents oversell under concurrent checkouts
+        // Atomic stock decrement - guard prevents oversell under concurrent checkouts
         foreach (var (variantId, qty, productName) in stockReservations)
         {
             var updated = await _db.ProductVariants
@@ -317,7 +317,7 @@ public class OrderService : IOrderService
 
         if (paymentResult.Success && paymentResult.BogOrderId != null)
         {
-            // Retry the post-BOG save — a transient DB failure here would leave the order in
+            // Retry the post-BOG save - a transient DB failure here would leave the order in
             // Pending with no BogOrderId, causing the reaper to cancel an order the customer may have paid.
             await SaveBogSessionWithRetryAsync(order.Id, paymentResult.BogOrderId, order.BogOrderKey, order.TotalAmount, paymentResult.RedirectUrl);
             // Keep in-memory entity consistent for any callers who inspect order.Status after this.
@@ -338,7 +338,7 @@ public class OrderService : IOrderService
 
     public async Task HandlePaymentCallbackAsync(string bogOrderId, string? orderKey)
     {
-        // Atomic claim: only one concurrent caller transitions AwaitingPayment → PaymentProcessing.
+        // Atomic claim: only one concurrent caller transitions AwaitingPayment -> PaymentProcessing.
         // RSA signature on the controller already authenticates the caller; orderKey is not re-checked here.
         var claimed = await _db.Orders
             .Where(o => o.BogOrderId == bogOrderId && o.Status == OrderStatus.AwaitingPayment)
@@ -459,7 +459,7 @@ public class OrderService : IOrderService
                 }
                 catch (Exception ex)
                 {
-                    // Non-critical — order is already confirmed; log and continue
+                    // Non-critical - order is already confirmed; log and continue
                     _logger.LogError(ex, "Failed to clear cart for user {UserId} after order {OrderId} payment", order.UserId, order.Id);
                 }
             }
@@ -479,7 +479,7 @@ public class OrderService : IOrderService
     /// Persists the BOG session details (BogOrderId + AwaitingPayment status) after a successful
     /// BOG session creation, with retries to guard against transient DB failures.
     /// On exhaustion, logs CRITICAL with full reconciliation details so an operator can manually
-    /// recover via BOG admin. Does NOT cancel the order — the customer may still pay.
+    /// recover via BOG admin. Does NOT cancel the order - the customer may still pay.
     /// </summary>
     private async Task SaveBogSessionWithRetryAsync(
         int orderId, string bogOrderId, string bogOrderKey, decimal totalAmount, string? redirectUrl)
@@ -490,7 +490,7 @@ public class OrderService : IOrderService
         {
             try
             {
-                // Use ExecuteUpdateAsync — a direct SQL UPDATE, more resilient than change-tracker
+                // Use ExecuteUpdateAsync - a direct SQL UPDATE, more resilient than change-tracker
                 // SaveChanges after a prior failure may have dirtied the DbContext state.
                 await _db.Orders
                     .Where(o => o.Id == orderId)

@@ -7,7 +7,7 @@ namespace Dressfield.Infrastructure.Services;
 internal static class BogPaymentStatus
 {
     /// <summary>
-    /// Returns true when the BOG status is non-terminal — i.e. the payment
+    /// Returns true when the BOG status is non-terminal - i.e. the payment
     /// is still in progress and the order should NOT be cancelled yet.
     /// Local transient failures (HTTP errors, exceptions) are signalled via
     /// PaymentVerificationResult.IsTransientFailure, not this method.

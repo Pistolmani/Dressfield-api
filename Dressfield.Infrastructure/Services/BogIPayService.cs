@@ -19,11 +19,11 @@ public class BogIPayService : IPaymentService
     private readonly HttpClient _http;
     private readonly ILogger<BogIPayService> _logger;
     private readonly IBogTokenProvider _tokenProvider;
-    private readonly string _apiBaseUrl;          // Backend URL — where BOG sends the webhook
-    private readonly string _frontendBaseUrl;     // Frontend URL — where the customer is redirected
+    private readonly string _apiBaseUrl;          // Backend URL - where BOG sends the webhook
+    private readonly string _frontendBaseUrl;     // Frontend URL - where the customer is redirected
     private readonly string _ordersUrl;
     private readonly string _receiptUrl;
-    private readonly string? _externalOrderLookupUrl; // GET by external_order_id — configure once endpoint is confirmed
+    private readonly string? _externalOrderLookupUrl; // GET by external_order_id - configure once endpoint is confirmed
 
     public BogIPayService(
         HttpClient http,
@@ -38,7 +38,7 @@ public class BogIPayService : IPaymentService
         _frontendBaseUrl = config["BogIPay:FrontendBaseUrl"] ?? throw new InvalidOperationException("BogIPay:FrontendBaseUrl is not configured.");
         _ordersUrl  = config["BogIPay:OrdersUrl"]  ?? "https://api.bog.ge/payments/v1/ecommerce/orders";
         _receiptUrl = config["BogIPay:ReceiptUrl"] ?? "https://api.bog.ge/payments/v1/receipt";
-        // Optional — verify BOG's external-order-id lookup endpoint before enabling.
+        // Optional - verify BOG's external-order-id lookup endpoint before enabling.
         // Set BogIPay:ExternalOrderLookupUrl in Azure config once confirmed.
         _externalOrderLookupUrl = config["BogIPay:ExternalOrderLookupUrl"];
     }
@@ -205,7 +205,7 @@ public class BogIPayService : IPaymentService
             using var doc = JsonDocument.Parse(raw);
             var root = doc.RootElement;
 
-            // Parse the same shape as VerifyCallbackAsync — adjust if BOG's external-lookup response differs.
+            // Parse the same shape as VerifyCallbackAsync - adjust if BOG's external-lookup response differs.
             var bogOrderId = root.TryGetProperty("id", out var idEl) ? idEl.GetString() ?? string.Empty : string.Empty;
 
             var statusKey = root.TryGetProperty("order_status", out var orderStatus)

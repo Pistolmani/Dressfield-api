@@ -21,7 +21,7 @@ public class AuditLog
 
     public string? ActorEmail { get; set; }
 
-    /// <summary>Free-text context: "Status: Pending → Shipped", field diffs, etc.</summary>
+    /// <summary>Free-text context: "Status: Pending -> Shipped", field diffs, etc.</summary>
     public string? Details { get; set; }
 
     public string? IpAddress { get; set; }

@@ -39,7 +39,7 @@ Log.Logger = new LoggerConfiguration()
 
 builder.Host.UseSerilog();
 
-// â"€â"€ Resolve real client IP from Azure / reverse proxy (required for rate limiting) â"€â"€
+// -- Resolve real client IP from Azure / reverse proxy (required for rate limiting) --
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
@@ -48,7 +48,7 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.KnownProxies.Clear();
 });
 
-// â"€â"€ Request body size (20 MB -- covers design image uploads) â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// -- Request body size (20 MB -- covers design image uploads)
 builder.WebHost.ConfigureKestrel(options =>
     options.Limits.MaxRequestBodySize = 20 * 1024 * 1024);
 
@@ -71,7 +71,7 @@ builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
     .AddDefaultTokenProviders();
 
 // IMPORTANT: Jwt:Secret must NEVER be left as empty in production.
-// Set it via Azure App Service â†’ Configuration â†’ Application settings: Jwt__Secret
+// Set it via Azure App Service -> Configuration -> Application settings: Jwt__Secret
 var jwtSecret = builder.Configuration["Jwt:Secret"];
 if (string.IsNullOrWhiteSpace(jwtSecret) || jwtSecret.Length < 32)
     throw new InvalidOperationException(
@@ -160,7 +160,7 @@ builder.Services.AddRateLimiter(options =>
         o.QueueLimit  = 0;
     });
 
-    // Public order status lookup — tighter limit to prevent key brute-forcing
+    // Public order status lookup - tighter limit to prevent key brute-forcing
     options.AddFixedWindowLimiter("status", o =>
     {
         o.Window      = TimeSpan.FromMinutes(1);
@@ -237,7 +237,7 @@ else
     }
 }
 
-// Payment service — real BOG iPay in prod, mock in dev
+// Payment service - real BOG iPay in prod, mock in dev
 var bogClientId = builder.Configuration["BogIPay:ClientId"];
 if (string.IsNullOrWhiteSpace(bogClientId))
 {
@@ -267,7 +267,7 @@ else
     {
         c.Timeout = TimeSpan.FromSeconds(15);
     })
-    // Retry only idempotent GET calls — never retry POST (create-order) to avoid duplicate sessions
+    // Retry only idempotent GET calls - never retry POST (create-order) to avoid duplicate sessions
     .AddPolicyHandler(request =>
         request.Method == HttpMethod.Get
             ? RetryPolicy()
