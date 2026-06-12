@@ -16,6 +16,17 @@ public class AdminDashboardService : IAdminDashboardService
         OrderStatus.Delivered,
     ];
 
+    // Custom orders flip to Reviewing the moment BOG confirms payment, then move
+    // through Approved -> InProduction -> Completed as the admin works the order.
+    // All four states are post-payment, so all four count toward revenue.
+    private static readonly CustomOrderStatus[] CustomOrderRevenueStatuses =
+    [
+        CustomOrderStatus.Reviewing,
+        CustomOrderStatus.Approved,
+        CustomOrderStatus.InProduction,
+        CustomOrderStatus.Completed,
+    ];
+
     private static readonly CustomOrderStatus[] PendingCustomStatuses =
     [
         CustomOrderStatus.Pending,
@@ -38,19 +49,41 @@ public class AdminDashboardService : IAdminDashboardService
         // scoped context throws "A second operation was started on this context..."
         // which the global handler maps to 400. Await sequentially — these are
         // small aggregate queries and there is no real perf win from parallelism.
-        var totalOrders = await _db.Orders
+        // Regular orders
+        var regularOrdersCount = await _db.Orders
             .AsNoTracking()
             .CountAsync();
 
-        var totalRevenue = await _db.Orders
+        var regularRevenue = await _db.Orders
             .AsNoTracking()
             .Where(o => RevenueStatuses.Contains(o.Status))
             .SumAsync(o => (decimal?)o.TotalAmount);
 
-        var paidTodayCount = await _db.Orders
+        var regularPaidToday = await _db.Orders
             .AsNoTracking()
             .Where(o =>
                 o.Status == OrderStatus.Paid &&
+                o.UpdatedAt >= startOfTodayUtc &&
+                o.UpdatedAt < startOfTomorrowUtc)
+            .CountAsync();
+
+        // Custom orders — historically excluded from revenue, which made the
+        // dashboard underreport whenever a customer paid for an embroidery order.
+        var customOrdersCount = await _db.CustomOrders
+            .AsNoTracking()
+            .CountAsync();
+
+        var customRevenue = await _db.CustomOrders
+            .AsNoTracking()
+            .Where(o => CustomOrderRevenueStatuses.Contains(o.Status))
+            .SumAsync(o => (decimal?)o.TotalPrice);
+
+        // "Paid today" counts the moment a custom order transitions out of the
+        // payment-processing zone into Reviewing on or after today (UTC).
+        var customPaidToday = await _db.CustomOrders
+            .AsNoTracking()
+            .Where(o =>
+                o.Status == CustomOrderStatus.Reviewing &&
                 o.UpdatedAt >= startOfTodayUtc &&
                 o.UpdatedAt < startOfTomorrowUtc)
             .CountAsync();
@@ -60,9 +93,9 @@ public class AdminDashboardService : IAdminDashboardService
             .CountAsync(o => PendingCustomStatuses.Contains(o.Status));
 
         return new AdminDashboardSummaryDto(
-            totalOrders,
-            totalRevenue ?? 0m,
-            paidTodayCount,
+            regularOrdersCount + customOrdersCount,
+            (regularRevenue ?? 0m) + (customRevenue ?? 0m),
+            regularPaidToday + customPaidToday,
             pendingCustomOrdersCount);
     }
 }

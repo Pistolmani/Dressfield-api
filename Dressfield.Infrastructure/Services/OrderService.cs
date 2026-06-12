@@ -105,6 +105,25 @@ public class OrderService : IOrderService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// Hard-deletes a Pending order. Only Pending is allowed because anything past
+    /// that has either touched BOG (AwaitingPayment/PaymentProcessing) or generated
+    /// revenue we must not lose for accounting. Items + status logs cascade.
+    /// </summary>
+    public async Task DeleteAsync(int id)
+    {
+        var order = await _db.Orders
+            .FirstOrDefaultAsync(o => o.Id == id)
+            ?? throw new KeyNotFoundException("შეკვეთა ვერ მოიძებნა");
+
+        if (order.Status != OrderStatus.Pending)
+            throw new InvalidOperationException(
+                "მხოლოდ Pending სტატუსის შეკვეთის წაშლა შეიძლება. დანარჩენი — გააუქმეთ.");
+
+        _db.Orders.Remove(order);
+        await _db.SaveChangesAsync();
+    }
+
     public async Task<IReadOnlyCollection<OrderSummaryDto>> GetByUserAsync(string userId)
     {
         return await _db.Orders

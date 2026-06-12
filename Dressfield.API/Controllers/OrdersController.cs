@@ -133,4 +133,31 @@ public class OrdersController : ControllerBase
             return NotFound();
         }
     }
+
+    /// <summary>DELETE /api/orders/admin/{id} - hard-delete a Pending order (cleanup of stale carts).</summary>
+    [HttpDelete("admin/{id:int}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> DeleteOrder(int id)
+    {
+        try
+        {
+            await _orders.DeleteAsync(id);
+            var adminUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+            await _auditLog.LogAsync("OrderDeleted", "Order",
+                entityId: id.ToString(),
+                entityName: $"Order #{id}",
+                actorId: adminUserId,
+                actorEmail: User.FindFirstValue(ClaimTypes.Email),
+                details: "Pending order deleted by admin");
+            return NoContent();
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
 }

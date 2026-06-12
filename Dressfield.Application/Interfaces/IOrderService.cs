@@ -9,6 +9,7 @@ public interface IOrderService
     Task<IReadOnlyCollection<OrderSummaryDto>> GetAdminAsync(OrderStatus? status);
     Task<OrderDetailDto?> GetAdminByIdAsync(int id);
     Task UpdateStatusAsync(int id, UpdateOrderStatusRequest request, string? changedByUserId = null);
+    Task DeleteAsync(int id);
 
     // Customer
     Task<IReadOnlyCollection<OrderSummaryDto>> GetByUserAsync(string userId);
