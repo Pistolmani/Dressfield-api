@@ -134,7 +134,8 @@ public class OrdersController : ControllerBase
         }
     }
 
-    /// <summary>DELETE /api/orders/admin/pending - hard-delete every Pending order at once.</summary>
+    /// <summary>DELETE /api/orders/admin/pending - hard-delete every unpaid order at once
+    /// (Pending, AwaitingPayment, PaymentProcessing, Cancelled).</summary>
     [HttpDelete("admin/pending")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> DeleteAllPending()
@@ -143,10 +144,10 @@ public class OrdersController : ControllerBase
         var adminUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
         await _auditLog.LogAsync("OrdersBulkDeleted", "Order",
             entityId: null,
-            entityName: "Pending orders",
+            entityName: "Unpaid orders",
             actorId: adminUserId,
             actorEmail: User.FindFirstValue(ClaimTypes.Email),
-            details: $"Bulk-deleted {deleted} Pending order(s)");
+            details: $"Bulk-deleted {deleted} unpaid order(s)");
         return Ok(new { deleted });
     }
 

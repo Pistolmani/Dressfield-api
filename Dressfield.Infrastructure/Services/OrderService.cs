@@ -125,21 +125,31 @@ public class OrderService : IOrderService
     }
 
     /// <summary>
-    /// Bulk-deletes every Pending order in one transaction. Items and status
-    /// logs cascade. Returns the count actually removed so the admin UI can
-    /// show "N orders deleted".
+    /// Bulk-deletes every unpaid order in one transaction. Unpaid means:
+    /// Pending (never went to BOG), AwaitingPayment (redirected but didn't
+    /// complete), PaymentProcessing (mid-callback), or Cancelled. All four
+    /// states are guaranteed not to have generated revenue, so wiping them
+    /// is safe for accounting. Items + status logs cascade.
     /// </summary>
     public async Task<int> DeleteAllPendingAsync()
     {
-        var pending = await _db.Orders
-            .Where(o => o.Status == OrderStatus.Pending)
+        var unpaidStatuses = new[]
+        {
+            OrderStatus.Pending,
+            OrderStatus.AwaitingPayment,
+            OrderStatus.PaymentProcessing,
+            OrderStatus.Cancelled,
+        };
+
+        var unpaid = await _db.Orders
+            .Where(o => unpaidStatuses.Contains(o.Status))
             .ToListAsync();
 
-        if (pending.Count == 0) return 0;
+        if (unpaid.Count == 0) return 0;
 
-        _db.Orders.RemoveRange(pending);
+        _db.Orders.RemoveRange(unpaid);
         await _db.SaveChangesAsync();
-        return pending.Count;
+        return unpaid.Count;
     }
 
     public async Task<IReadOnlyCollection<OrderSummaryDto>> GetByUserAsync(string userId)
