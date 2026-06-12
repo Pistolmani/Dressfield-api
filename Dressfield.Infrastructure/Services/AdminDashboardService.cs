@@ -34,16 +34,20 @@ public class AdminDashboardService : IAdminDashboardService
         var startOfTodayUtc = DateTime.UtcNow.Date;
         var startOfTomorrowUtc = startOfTodayUtc.AddDays(1);
 
-        var totalOrdersTask = _db.Orders
+        // DbContext is not thread-safe; running these as Task.WhenAll on a single
+        // scoped context throws "A second operation was started on this context..."
+        // which the global handler maps to 400. Await sequentially — these are
+        // small aggregate queries and there is no real perf win from parallelism.
+        var totalOrders = await _db.Orders
             .AsNoTracking()
             .CountAsync();
 
-        var totalRevenueTask = _db.Orders
+        var totalRevenue = await _db.Orders
             .AsNoTracking()
             .Where(o => RevenueStatuses.Contains(o.Status))
             .SumAsync(o => (decimal?)o.TotalAmount);
 
-        var paidTodayCountTask = _db.Orders
+        var paidTodayCount = await _db.Orders
             .AsNoTracking()
             .Where(o =>
                 o.Status == OrderStatus.Paid &&
@@ -51,17 +55,15 @@ public class AdminDashboardService : IAdminDashboardService
                 o.UpdatedAt < startOfTomorrowUtc)
             .CountAsync();
 
-        var pendingCustomOrdersCountTask = _db.CustomOrders
+        var pendingCustomOrdersCount = await _db.CustomOrders
             .AsNoTracking()
             .CountAsync(o => PendingCustomStatuses.Contains(o.Status));
 
-        await Task.WhenAll(totalOrdersTask, totalRevenueTask, paidTodayCountTask, pendingCustomOrdersCountTask);
-
         return new AdminDashboardSummaryDto(
-            totalOrdersTask.Result,
-            totalRevenueTask.Result ?? 0m,
-            paidTodayCountTask.Result,
-            pendingCustomOrdersCountTask.Result);
+            totalOrders,
+            totalRevenue ?? 0m,
+            paidTodayCount,
+            pendingCustomOrdersCount);
     }
 }
 
