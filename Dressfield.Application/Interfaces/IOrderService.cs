@@ -10,6 +10,7 @@ public interface IOrderService
     Task<OrderDetailDto?> GetAdminByIdAsync(int id);
     Task UpdateStatusAsync(int id, UpdateOrderStatusRequest request, string? changedByUserId = null);
     Task DeleteAsync(int id);
+    Task<int> DeleteAllPendingAsync();
 
     // Customer
     Task<IReadOnlyCollection<OrderSummaryDto>> GetByUserAsync(string userId);

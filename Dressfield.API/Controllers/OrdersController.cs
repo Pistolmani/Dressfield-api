@@ -134,6 +134,22 @@ public class OrdersController : ControllerBase
         }
     }
 
+    /// <summary>DELETE /api/orders/admin/pending - hard-delete every Pending order at once.</summary>
+    [HttpDelete("admin/pending")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> DeleteAllPending()
+    {
+        var deleted = await _orders.DeleteAllPendingAsync();
+        var adminUserId = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        await _auditLog.LogAsync("OrdersBulkDeleted", "Order",
+            entityId: null,
+            entityName: "Pending orders",
+            actorId: adminUserId,
+            actorEmail: User.FindFirstValue(ClaimTypes.Email),
+            details: $"Bulk-deleted {deleted} Pending order(s)");
+        return Ok(new { deleted });
+    }
+
     /// <summary>DELETE /api/orders/admin/{id} - hard-delete a Pending order (cleanup of stale carts).</summary>
     [HttpDelete("admin/{id:int}")]
     [Authorize(Roles = "Admin")]

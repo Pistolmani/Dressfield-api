@@ -124,6 +124,24 @@ public class OrderService : IOrderService
         await _db.SaveChangesAsync();
     }
 
+    /// <summary>
+    /// Bulk-deletes every Pending order in one transaction. Items and status
+    /// logs cascade. Returns the count actually removed so the admin UI can
+    /// show "N orders deleted".
+    /// </summary>
+    public async Task<int> DeleteAllPendingAsync()
+    {
+        var pending = await _db.Orders
+            .Where(o => o.Status == OrderStatus.Pending)
+            .ToListAsync();
+
+        if (pending.Count == 0) return 0;
+
+        _db.Orders.RemoveRange(pending);
+        await _db.SaveChangesAsync();
+        return pending.Count;
+    }
+
     public async Task<IReadOnlyCollection<OrderSummaryDto>> GetByUserAsync(string userId)
     {
         return await _db.Orders
