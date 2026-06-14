@@ -48,9 +48,17 @@ public class AuthController : ControllerBase
         if (string.IsNullOrEmpty(refreshToken))
             return Unauthorized();
 
-        var response = await _authService.RefreshTokenAsync(refreshToken);
-        SetRefreshTokenCookie(response.RefreshToken!);
-        return Ok(new { response.AccessToken, response.User });
+        try
+        {
+            var response = await _authService.RefreshTokenAsync(refreshToken);
+            SetRefreshTokenCookie(response.RefreshToken!);
+            return Ok(new { response.AccessToken, response.User });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            DeleteRefreshTokenCookie();
+            return Unauthorized();
+        }
     }
 
     [Authorize]

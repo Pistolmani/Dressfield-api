@@ -25,7 +25,10 @@ public sealed class GlobalExceptionHandler : IExceptionHandler
         var traceId = httpContext.TraceIdentifier;
         var (status, title, detail) = MapException(exception);
 
-        _logger.LogError(exception, "Unhandled exception. TraceId: {TraceId}", traceId);
+        if (status >= 500)
+            _logger.LogError(exception, "Unhandled exception. TraceId: {TraceId}", traceId);
+        else
+            _logger.LogWarning(exception, "Handled exception ({Status}). TraceId: {TraceId}", status, traceId);
 
         var problemDetails = new ProblemDetails
         {
