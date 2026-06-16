@@ -23,6 +23,10 @@ public record CustomOrderSummaryDto(
     string? UserId,
     int? BaseProductId,
     string? BaseProductName,
+    // Garment type the customer configured (e.g. "hoodie"). Custom orders never
+    // reference a catalog product, so BaseProductName is always null - this is the
+    // meaningful label for the admin list.
+    string? ProductTypeId,
     string ContactName,
     string ContactPhone,
     string ContactEmail,

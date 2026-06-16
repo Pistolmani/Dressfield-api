@@ -349,6 +349,7 @@ public class CustomOrderService : ICustomOrderService
             o.UserId,
             o.BaseProductId,
             o.BaseProduct?.Name,
+            o.ProductTypeId,
             o.ContactName,
             o.ContactPhone,
             o.ContactEmail,
