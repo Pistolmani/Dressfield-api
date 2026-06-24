@@ -13,6 +13,10 @@ namespace Dressfield.Infrastructure.Services;
 
 public class OrderService : IOrderService
 {
+    // Upper bound on rows returned by the admin list query, so it can't load an unbounded
+    // table into memory as order volume grows. Newest-first; raise or add paging if needed.
+    private const int MaxAdminListRows = 500;
+
     private readonly DressfieldDbContext _db;
     private readonly IPaymentService _payment;
     private readonly ICartService _cart;
@@ -48,6 +52,9 @@ public class OrderService : IOrderService
 
         return await query
             .OrderByDescending(o => o.CreatedAt)
+            // Safety cap: never load the entire (unbounded) Orders table into memory. Returns the
+            // newest MaxAdminListRows; raise it or add true paging if the admin UI needs older rows.
+            .Take(MaxAdminListRows)
             .Select(o => new OrderSummaryDto(
                 o.Id,
                 o.UserId,
