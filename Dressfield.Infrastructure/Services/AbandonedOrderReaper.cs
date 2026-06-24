@@ -63,7 +63,8 @@ public class AbandonedOrderReaper : BackgroundService
         }
     }
 
-    private async Task RunAsync(CancellationToken ct)
+    // Internal so Dressfield.Tests can drive a single cycle without ExecuteAsync's infinite loop.
+    internal async Task RunAsync(CancellationToken ct)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<DressfieldDbContext>();

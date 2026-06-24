@@ -23,7 +23,8 @@ public record OrderSummaryDto(
     OrderStatus Status,
     decimal TotalAmount,
     int ItemCount,
-    DateTime CreatedAt);
+    DateTime CreatedAt,
+    string? CustomerNotes);
 
 public record OrderStatusLookupDto(
     int OrderId,

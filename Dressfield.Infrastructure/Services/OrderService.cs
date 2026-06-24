@@ -58,7 +58,8 @@ public class OrderService : IOrderService
                 o.Status,
                 o.TotalAmount,
                 o.Items.Count,
-                o.CreatedAt))
+                o.CreatedAt,
+                o.CustomerNotes))
             .ToListAsync();
     }
 
@@ -168,7 +169,8 @@ public class OrderService : IOrderService
                 o.Status,
                 o.TotalAmount,
                 o.Items.Count,
-                o.CreatedAt))
+                o.CreatedAt,
+                o.CustomerNotes))
             .ToListAsync();
     }
 

@@ -1,11 +1,13 @@
 using Dressfield.Application.DTOs;
 using Dressfield.Application.Interfaces;
+using Dressfield.Application.Options;
 using Dressfield.Core.Entities;
 using Dressfield.Core.Enums;
 using Dressfield.Core.Interfaces;
 using Dressfield.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Dressfield.Infrastructure.Services;
 
@@ -14,17 +16,20 @@ public class CustomOrderService : ICustomOrderService
     private readonly DressfieldDbContext _db;
     private readonly IPaymentService _payment;
     private readonly IStorageService _storage;
+    private readonly CustomOrderPricingOptions _pricing;
     private readonly ILogger<CustomOrderService> _logger;
 
     public CustomOrderService(
         DressfieldDbContext db,
         IPaymentService payment,
         IStorageService storage,
+        IOptions<CustomOrderPricingOptions> pricing,
         ILogger<CustomOrderService> logger)
     {
         _db = db;
         _payment = payment;
         _storage = storage;
+        _pricing = pricing.Value;
         _logger = logger;
     }
 
@@ -109,9 +114,11 @@ public class CustomOrderService : ICustomOrderService
                 throw new KeyNotFoundException("არჩეული პროდუქტი ვერ მოიძებნა");
         }
 
-        // The frontend is authoritative for the price - it applies the base custom fee,
-        // size adjustments, and promo discounts the backend doesn't model. We trust the
-        // submitted total (validated > 0) rather than recomputing it here.
+        // The frontend computes the exact price (base fee + size adjustments + promo),
+        // which the backend doesn't fully model. We accept the submitted total but enforce
+        // a server-side minimum so a forged request can't check out below the legitimate
+        // floor and get a BOG session for a token amount.
+        await EnforcePriceFloorAsync(request);
         var calculatedTotalPrice = request.TotalPrice;
 
         // Custom order keys are prefixed with "c-" so the payment callback can distinguish them
@@ -200,6 +207,53 @@ public class CustomOrderService : ICustomOrderService
         }
 
         return new CustomOrderCheckoutResponse(order.Id, paymentResult.RedirectUrl, paymentResult.Success);
+    }
+
+    /// <summary>
+    /// Rejects totals below the cheapest legitimate price for the submitted garment/design
+    /// count. A floor, not an exact recompute: quantity multiplies and shipping adds, so real
+    /// totals always exceed it; the max active promo discount shrinks it. Per-design Size is
+    /// client-supplied, so the cheapest embroidery fee is assumed for every design.
+    /// </summary>
+    internal async Task EnforcePriceFloorAsync(CreateCustomOrderRequest request)
+    {
+        if (!_pricing.Enabled || request.Designs.Count == 0)
+            return;
+
+        var minFee = _pricing.EmbroiderySizeFees.Count > 0 ? _pricing.EmbroiderySizeFees.Values.Min() : 0m;
+        var basePrice = request.ProductTypeId is { } productType
+                        && _pricing.BasePrices.TryGetValue(productType.Trim(), out var configured)
+            ? configured
+            : 0m; // unknown/own-product type -> conservative floor of minFee per design
+
+        var rawFloor = basePrice + minFee * request.Designs.Count;
+        if (rawFloor <= 0m)
+            return;
+
+        // Client-side max: the promo table is tiny, and SQLite (used in tests) cannot
+        // aggregate decimal columns server-side.
+        var now = DateTime.UtcNow;
+        var activeDiscounts = await _db.PromoCodes
+            .AsNoTracking()
+            .Where(p => p.IsActive
+                        && (p.ExpiresAtUtc == null || p.ExpiresAtUtc > now)
+                        && (p.MaxUses == null || p.UsedCount < p.MaxUses))
+            .Select(p => p.DiscountPercentage)
+            .ToListAsync();
+        var maxPromoPercent = activeDiscounts.Count > 0 ? activeDiscounts.Max() : 0m;
+
+        var floor = PricingHelper.RoundMoney(
+            rawFloor * (1m - PricingHelper.NormalizePercent(maxPromoPercent) / 100m));
+
+        // 0.01 tolerance matches the BOG amount-verification tolerance in the callback handler.
+        if (request.TotalPrice < floor - 0.01m)
+        {
+            _logger.LogWarning(
+                "Custom order price floor rejection: submitted {Submitted} < floor {Floor} (type={ProductType}, designs={DesignCount}, maxPromo={MaxPromo}%)",
+                request.TotalPrice, floor, request.ProductTypeId, request.Designs.Count, maxPromoPercent);
+
+            throw new InvalidOperationException("ფასი არასწორია - გთხოვთ განაახლოთ გვერდი და სცადოთ თავიდან");
+        }
     }
 
     public async Task HandlePaymentCallbackAsync(string bogOrderId, string? orderKey)

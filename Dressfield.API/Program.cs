@@ -31,13 +31,24 @@ var builder = WebApplication.CreateBuilder(args);
 var webRootPath = Path.Combine(builder.Environment.ContentRootPath, "wwwroot");
 Directory.CreateDirectory(Path.Combine(webRootPath, "uploads", "designs"));
 
-Log.Logger = new LoggerConfiguration()
+// Application Insights is opt-in via app setting: absent locally (console/file only),
+// set on the Azure Web App. Serilog Error -> AI severityLevel 3, Fatal -> 4; the alert
+// rule fires on severityLevel >= 3.
+var aiConnectionString = Environment.GetEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING");
+
+var loggerConfiguration = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .WriteTo.Console()
-    .WriteTo.File("logs/dressfield-.log", rollingInterval: RollingInterval.Day)
-    .CreateLogger();
+    .WriteTo.File("logs/dressfield-.log", rollingInterval: RollingInterval.Day);
+if (!string.IsNullOrWhiteSpace(aiConnectionString))
+    loggerConfiguration.WriteTo.ApplicationInsights(aiConnectionString, TelemetryConverter.Traces);
+Log.Logger = loggerConfiguration.CreateLogger();
 
 builder.Host.UseSerilog();
+
+// Also captures requests, dependencies, and unhandled exceptions.
+if (!string.IsNullOrWhiteSpace(aiConnectionString))
+    builder.Services.AddApplicationInsightsTelemetry();
 
 // -- Resolve real client IP from Azure / reverse proxy (required for rate limiting) --
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -278,6 +289,8 @@ else
 
 builder.Services.Configure<Dressfield.Application.Validators.UploadHostOptions>(o =>
     o.AllowedHosts = builder.Configuration.GetSection("AzureStorage:AllowedUploadHosts").Get<string[]>() ?? []);
+builder.Services.Configure<Dressfield.Application.Options.CustomOrderPricingOptions>(
+    builder.Configuration.GetSection("CustomOrders:PriceFloor"));
 builder.Services.AddValidatorsFromAssemblyContaining<Dressfield.Application.DTOs.RegisterRequest>();
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
