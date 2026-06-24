@@ -31,7 +31,7 @@ public class MockPaymentService : IPaymentService
             orderId, amount);
 
         var bogOrderId  = $"MOCK-{orderKey[..8].ToUpperInvariant()}";
-        var redirectUrl = $"{_siteBaseUrl.TrimEnd('/')}/order-confirmation?orderId={orderId}&key={orderKey}&mock=1";
+        var redirectUrl = $"{_siteBaseUrl.TrimEnd('/')}/order-confirmation/?orderId={orderId}&key={orderKey}&mock=1";
 
         return Task.FromResult(new PaymentSessionResult(true, redirectUrl, bogOrderId, null));
     }

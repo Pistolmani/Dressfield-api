@@ -56,8 +56,13 @@ public class BogIPayService : IPaymentService
                 external_order_id = orderKey,
                 redirect_urls = new
                 {
-                    success = $"{_frontendBaseUrl.TrimEnd('/')}/order-confirmation?orderId={orderId}&key={orderKey}",
-                    fail    = $"{_frontendBaseUrl.TrimEnd('/')}/order-failed?orderId={orderId}"
+                    // Trailing slash is required: the frontend is a Next.js static export built with
+                    // trailingSlash:true, so the canonical pages are /order-confirmation/ and /order-failed/
+                    // (directories served via index.html). Omitting it makes the landing depend on the host
+                    // (Hostinger/LiteSpeed) appending the slash and preserving the query string, which is not
+                    // guaranteed and can drop the user on the homepage/404 instead of the result page.
+                    success = $"{_frontendBaseUrl.TrimEnd('/')}/order-confirmation/?orderId={orderId}&key={orderKey}",
+                    fail    = $"{_frontendBaseUrl.TrimEnd('/')}/order-failed/?orderId={orderId}"
                 },
                 purchase_units = new
                 {
