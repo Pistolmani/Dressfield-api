@@ -147,37 +147,32 @@ builder.Services.AddCors(options =>
 
 builder.Services.AddRateLimiter(options =>
 {
+    // Partition every limiter by the real client IP (resolved via ForwardedHeaders above).
+    // Without this, AddFixedWindowLimiter(name, ...) is a single GLOBAL bucket shared across
+    // all clients: one caller could exhaust it and lock everyone out, and the tight "status"
+    // limit would 429 legitimate customers returning from BOG. Keyed per-IP, the limit is
+    // enforced per client as the comments intend.
+    static Func<HttpContext, RateLimitPartition<string>> PerIpFixedWindow(int permitLimit) =>
+        httpContext => RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                Window      = TimeSpan.FromMinutes(1),
+                PermitLimit = permitLimit,
+                QueueLimit  = 0,
+            });
+
     // Auth endpoints -- 10 requests per minute per IP (prevents brute-force)
-    options.AddFixedWindowLimiter("auth", o =>
-    {
-        o.Window              = TimeSpan.FromMinutes(1);
-        o.PermitLimit         = 10;
-        o.QueueLimit          = 0;
-        o.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-    });
+    options.AddPolicy("auth", PerIpFixedWindow(10));
 
     // Order creation -- 20 requests per minute per IP (prevents order flooding)
-    options.AddFixedWindowLimiter("orders", o =>
-    {
-        o.Window      = TimeSpan.FromMinutes(1);
-        o.PermitLimit = 20;
-        o.QueueLimit  = 0;
-    });
+    options.AddPolicy("orders", PerIpFixedWindow(20));
 
-    options.AddFixedWindowLimiter("upload", o =>
-    {
-        o.Window      = TimeSpan.FromMinutes(1);
-        o.PermitLimit = 5;
-        o.QueueLimit  = 0;
-    });
+    // Design upload -- 5 requests per minute per IP
+    options.AddPolicy("upload", PerIpFixedWindow(5));
 
-    // Public order status lookup - tighter limit to prevent key brute-forcing
-    options.AddFixedWindowLimiter("status", o =>
-    {
-        o.Window      = TimeSpan.FromMinutes(1);
-        o.PermitLimit = 5;
-        o.QueueLimit  = 0;
-    });
+    // Public order status lookup -- 5/min per IP to prevent key brute-forcing
+    options.AddPolicy("status", PerIpFixedWindow(5));
 
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 });
