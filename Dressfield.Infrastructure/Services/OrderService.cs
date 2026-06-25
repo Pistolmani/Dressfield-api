@@ -211,11 +211,19 @@ public class OrderService : IOrderService
     {
         var normalizedIdempotencyKey = string.IsNullOrWhiteSpace(idempotencyKey) ? null : idempotencyKey.Trim();
 
-        if (normalizedIdempotencyKey is not null && !string.IsNullOrEmpty(userId))
+        if (normalizedIdempotencyKey is not null)
         {
-            var existing = await _db.Orders
+            // Dedupe within the same identity scope: logged-in users by their UserId, guests by the
+            // guest pool (UserId IS NULL). The key is a client-generated UUID, so a guest replay of
+            // the same submit returns the original order instead of creating a duplicate. Branch the
+            // null case explicitly to avoid EF parameterized-null comparison ambiguity.
+            var scoped = string.IsNullOrEmpty(userId)
+                ? _db.Orders.Where(o => o.UserId == null)
+                : _db.Orders.Where(o => o.UserId == userId);
+
+            var existing = await scoped
                 .AsNoTracking()
-                .Where(o => o.UserId == userId && o.IdempotencyKey == normalizedIdempotencyKey)
+                .Where(o => o.IdempotencyKey == normalizedIdempotencyKey)
                 .Select(o => new { o.Id, o.Status, o.BogOrderId })
                 .FirstOrDefaultAsync();
 
@@ -318,7 +326,8 @@ public class OrderService : IOrderService
         var order = new Order
         {
             UserId = userId,
-            IdempotencyKey = !string.IsNullOrEmpty(userId) ? normalizedIdempotencyKey : null,
+            // Persist for guests too (UserId null) so the guest-scoped dedup above can match on replay.
+            IdempotencyKey = normalizedIdempotencyKey,
             ContactName = request.ContactName.Trim(),
             ContactPhone = request.ContactPhone.Trim(),
             ContactEmail = request.ContactEmail.Trim().ToLowerInvariant(),
